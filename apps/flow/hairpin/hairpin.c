@@ -177,61 +177,93 @@ static int lcore_main(void *arg)
     struct rte_mbuf **tx_bufs = malloc(app_set->packets_to_send * sizeof(struct rte_mbuf *));
     int expected_sw = 0;
     int expected_hp = 0;
+    uint16_t sent_total = 0;
 
-    // Generate interleaved packets (Even/Odd IPs)
-    for (int i = 0; i < app_set->packets_to_send; i++) {
-        if (i % 2 == 0) {
-            tx_bufs[i] = generate_ipv4_pkt(mbuf_pool, RTE_IPV4(10, 0, 0, 2)); // Even -> SW
-            expected_sw++;
-        } else {
-            tx_bufs[i] = generate_ipv4_pkt(mbuf_pool, RTE_IPV4(10, 0, 0, 3)); // Odd -> Hairpin
-            expected_hp++;
+    struct rte_mbuf *temp_bufs[app_set->dpdk.burst_size];
+
+    // 1. GENERATE AND SEND IN SMALL BATCHES (CHUNKS OF 32)
+    for (int i = 0; i < app_set->packets_to_send; i += app_set->dpdk.burst_size) {
+        uint16_t chunk_size = RTE_MIN((uint16_t)app_set->dpdk.burst_size, (uint16_t)(app_set->packets_to_send - i));
+
+        // Allocate only a small batch of packets (we won't deplete the mempool)
+        for (uint16_t j = 0; j < chunk_size; j++) {
+            int pkt_idx = i + j;
+            if (pkt_idx % 2 == 0) {
+                temp_bufs[j] = generate_ipv4_pkt(mbuf_pool, RTE_IPV4(10, 0, 0, 2)); // Even -> SW
+                expected_sw++;
+            } else {
+                temp_bufs[j] = generate_ipv4_pkt(mbuf_pool, RTE_IPV4(10, 0, 0, 3)); // Odd -> Hairpin
+                expected_hp++;
+            }
         }
+
+        // Sending a batch (with a retry mechanism in case the TX ring is full)
+        uint16_t sent = 0;
+        int retries = 0;
+        while (sent < chunk_size && retries < 1000) {
+            uint16_t nb_tx = rte_eth_tx_burst(PORT_IN_ID, 0, &temp_bufs[sent], chunk_size - sent);
+            sent += nb_tx;
+            if (sent < chunk_size) {
+                rte_delay_us(10);
+                retries++;
+            }
+        }
+
+        // If we still weren't able to send everything, we need to free the remaining mbufs (to prevent leaks!)
+        if (unlikely(sent < chunk_size)) {
+            printf("WARNING: TX queue full, freeing %u unsent packets\n", chunk_size - sent);
+            for (uint16_t j = sent; j < chunk_size; j++) {
+                int pkt_idx = i + j;
+                if (pkt_idx % 2 == 0) expected_sw--;
+                else expected_hp--;
+                rte_pktmbuf_free(temp_bufs[j]);
+            }
+        }
+        sent_total += sent;
     }
 
-    uint16_t sent = rte_eth_tx_burst(PORT_IN_ID, 0, tx_bufs, app_set->packets_to_send);
-    printf("Packets sent: %u (Even/SW: %d, Odd/Hairpin: %d)\n", sent, expected_sw, expected_hp);
+    printf("Packets sent successfully: %u (Even/SW: %d, Odd/Hairpin: %d)\n", sent_total, expected_sw, expected_hp);
 
     rte_delay_ms(100);
 
-    // Receive SW packets
-    struct rte_mbuf **rx_bufs = malloc(app_set->packets_to_send * sizeof(struct rte_mbuf *));
+    // 2. RECEIVE LOOPS (We read until we have received all expected software packets or a timeout occurs)
+    struct rte_mbuf *rx_bufs[app_set->dpdk.burst_size];
     int sw_received = 0;
     int error_leaked = 0;
 
-    for (uint16_t q = 0; q < app_set->nb_std_queues; q++) {
-        uint16_t nb_rx = rte_eth_rx_burst(PORT_IN_ID, q, rx_bufs, app_set->packets_to_send);
-        for (uint16_t i = 0; i < nb_rx; i++) {
-            struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(rx_bufs[i], struct rte_ether_hdr *);
-            struct rte_ipv4_hdr *ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
-            uint32_t ip = rte_be_to_cpu_32(ip_hdr->dst_addr);
+    uint64_t start_tsc = rte_get_tsc_cycles();
+    uint64_t timeout_ticks = rte_get_timer_hz() * 2; // Timeout 2 seconds
 
-            // Check the last bit to ensure SW only caught Even IPs
-            if ((ip & 1) == 1) {
-                printf("ERROR: Odd packet leaked into SW queue!\n");
-                error_leaked++;
-            } else {
-                sw_received++;
+    while (sw_received < expected_sw && (rte_get_tsc_cycles() - start_tsc) < timeout_ticks) {
+        for (uint16_t q = 0; q < app_set->nb_std_queues; q++) {
+            uint16_t nb_rx = rte_eth_rx_burst(PORT_IN_ID, q, rx_bufs, app_set->dpdk.burst_size);
+            for (uint16_t i = 0; i < nb_rx; i++) {
+                struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(rx_bufs[i], struct rte_ether_hdr *);
+                struct rte_ipv4_hdr *ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
+                uint32_t ip = rte_be_to_cpu_32(ip_hdr->dst_addr);
+
+                if ((ip & 1) == 1) {
+                    printf("ERROR: Odd packet leaked into SW queue!\n");
+                    error_leaked++;
+                } else {
+                    sw_received++;
+                }
+                rte_pktmbuf_free(rx_bufs[i]);
             }
-            rte_pktmbuf_free(rx_bufs[i]);
         }
+        rte_delay_us(10);
     }
 
-    // Results and statistics
     printf("\n=== TEST RESULTS ===\n");
     printf("SW received valid even packets: %d / %d\n", sw_received, expected_sw);
     printf("Odd packets leaked to SW: %d (expected 0)\n", error_leaked);
-
     printf("Expected hairpinned packets on Port 1: %d\n", expected_hp);
 
     if (sw_received == expected_sw && error_leaked == 0) {
         printf("\n>>> TEST PASSED: Hairpin split is working! <<<\n");
     } else {
-        printf("\n>>> TEST FAILED: Check statistics and NFB configuration! <<<\n");
+        printf("\n>>> TEST FAILED: Timeout or packet loss! <<<\n");
     }
-
-    free(tx_bufs);
-    free(rx_bufs);
 
     return 0;
 }
