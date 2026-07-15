@@ -60,7 +60,9 @@ void rule_factory(
 void create_flow(uint16_t portid, struct rte_flow_error *error) {
     uint32_t group0 = 0;
     uint32_t group2 = 2;
-    uint32_t priority = 0;
+    uint32_t priority_255_255_255_0 = 0;
+    uint32_t priority_255_255_0_0 = 1;
+    uint32_t priority_default = 2;
     struct rte_flow_item_ipv4 ipv4 = {0};
     struct rte_flow_item_ipv4 ipv4_mask = {0};
     struct rte_flow_action_queue queue = {
@@ -70,18 +72,18 @@ void create_flow(uint16_t portid, struct rte_flow_error *error) {
         .group = 2
     };
 
-    rule_factory(portid, error, NULL, NULL, RTE_FLOW_ITEM_TYPE_VOID, RTE_FLOW_ACTION_TYPE_JUMP, &jump, group0, priority);
+    rule_factory(portid, error, NULL, NULL, RTE_FLOW_ITEM_TYPE_VOID, RTE_FLOW_ACTION_TYPE_JUMP, &jump, group0, 0);
 
     ipv4.hdr.dst_addr = inet_addr("192.168.1.0");
     ipv4_mask.hdr.dst_addr = inet_addr("255.255.255.0");
     queue.index = 1;
-    rule_factory(portid, error, &ipv4, &ipv4_mask, RTE_FLOW_ITEM_TYPE_IPV4, RTE_FLOW_ACTION_TYPE_QUEUE, &queue, group2, priority);
+    rule_factory(portid, error, &ipv4, &ipv4_mask, RTE_FLOW_ITEM_TYPE_IPV4, RTE_FLOW_ACTION_TYPE_QUEUE, &queue, group2, priority_255_255_255_0);
 
     ipv4_mask.hdr.dst_addr = inet_addr("255.255.0.0");
     queue.index = 2;
-    rule_factory(portid, error, &ipv4, &ipv4_mask, RTE_FLOW_ITEM_TYPE_IPV4, RTE_FLOW_ACTION_TYPE_QUEUE, &queue, group2, priority);
+    rule_factory(portid, error, &ipv4, &ipv4_mask, RTE_FLOW_ITEM_TYPE_IPV4, RTE_FLOW_ACTION_TYPE_QUEUE, &queue, group2, priority_255_255_0_0);
 
     ipv4_mask.hdr.dst_addr = inet_addr("0.0.0.0");
     queue.index = 0;
-    rule_factory(portid, error, &ipv4, &ipv4_mask, RTE_FLOW_ITEM_TYPE_IPV4, RTE_FLOW_ACTION_TYPE_QUEUE, &queue, group2, priority);
+    rule_factory(portid, error, &ipv4, &ipv4_mask, RTE_FLOW_ITEM_TYPE_IPV4, RTE_FLOW_ACTION_TYPE_QUEUE, &queue, group2, priority_default);
 }
