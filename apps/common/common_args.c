@@ -39,18 +39,7 @@ int set_default_dpdk_setts(struct dpdk_settings *dpdk)
 
     dpdk->ports = 1;
 
-    struct rte_eth_dev_info dev_info;
-    int ret = rte_eth_dev_info_get(0, &dev_info);
-    if (ret != 0) {
-        rte_log(RTE_LOG_ERR, RTE_LOGTYPE_EAL, "ERROR: rte_eth_dev_info_get() faild for port %u: %s\n",
-                0,
-                strerror(-ret)
-        );
-
-        return ret;
-    }
-
-    dpdk->queues_per_port = dev_info.max_tx_queues;
+    dpdk->queues_per_port = 1;
 
     /* NOTE: optimal mempool size can be counted as:
         nports * nb_rx_queue * nb_rxd +
@@ -62,11 +51,13 @@ int set_default_dpdk_setts(struct dpdk_settings *dpdk)
 
         This info is taken from l3fwd example source code.
     */
+
+    uint32_t queue_cnt_for_mempool = 32;
     dpdk->mempool_size = RTE_MAX(
-            dpdk->ports * dpdk->queues_per_port * dpdk->descriptors + \
-            dpdk->ports * 0 * 0 + \
-            dpdk->ports * 16 * dpdk->burst_size + \
-            16 * dpdk->mempool_cache_size, MIN_MEMPOOL_SIZE);
+            dpdk->ports * queue_cnt_for_mempool * dpdk->descriptors + \
+            dpdk->ports * rte_lcore_count() * dpdk->burst_size + \
+            dpdk->ports * queue_cnt_for_mempool * dpdk->descriptors + \
+            rte_lcore_count() * dpdk->mempool_cache_size, MIN_MEMPOOL_SIZE);
 
     // Clear port configuration.
     memset(&dpdk->port_conf, 0, (sizeof(struct rte_eth_conf)));
@@ -187,5 +178,5 @@ void print_dpdk_args_help()
     printf("\t -d, --descriptors <number_of_descriptors> = The number of receive descriptors to allocate for the receive ring. Default value for this parameter is 1024.\n");
     printf("\t -s, --mbuf-size <mbuf_size> = Maximum size of one packet. Default value for this parameter is 1518 + RTE_PKTMBUF_HEADROOM.\n");
     printf("\t -p, --ports <number of used ports> = How many ports should be used. Default value for this parameter is 1.\n");
-    printf("\t -q, --queues-per-port <number of used ports> = How many queues should inicialized per port. Default value for this parameter is the maximum for the given card.\n");
+    printf("\t -q, --queues-per-port <number of used queues> = How many queues should inicialized per port. Default value for this parameter is 1.\n");
 }
