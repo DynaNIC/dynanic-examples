@@ -1,5 +1,4 @@
 add_subdirectory(flag)
 add_subdirectory(hairpin)
-add_subdirectory(http_loadbalancing)
 add_subdirectory(lpm)
 add_subdirectory(mark)
