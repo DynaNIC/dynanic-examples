@@ -516,8 +516,8 @@ int bf_flow_bulk_insert(struct bf_flow_ctx *ctx, volatile int *stop, struct bf_b
 /* Counters and teardown                                                    */
 /* ------------------------------------------------------------------------ */
 
-int bf_flow_counter_read(struct bf_flow_ctx *ctx, struct rte_flow *flow,
-                         uint64_t *hits, uint64_t *bytes)
+static int counter_query(struct bf_flow_ctx *ctx, struct rte_flow *flow,
+                         struct rte_flow_query_count *qc)
 {
     /* mlx5 HWS (flow_hw_query) walks the actions up to END, so a single
      * action without END makes it read past the end of the list. */
@@ -525,17 +525,31 @@ int bf_flow_counter_read(struct bf_flow_ctx *ctx, struct rte_flow *flow,
         { .type = RTE_FLOW_ACTION_TYPE_COUNT },
         { .type = RTE_FLOW_ACTION_TYPE_END },
     };
-    struct rte_flow_query_count qc = { 0 };
     struct rte_flow_error err;
 
     if (flow == NULL)
         return -1;
-    if (rte_flow_query(ctx->port_id, flow, count, &qc, &err) != 0)
+    return rte_flow_query(ctx->port_id, flow, count, qc, &err) != 0 ? -1 : 0;
+}
+
+int bf_flow_counter_read(struct bf_flow_ctx *ctx, struct rte_flow *flow,
+                         uint64_t *hits, uint64_t *bytes)
+{
+    struct rte_flow_query_count qc = { 0 };
+
+    if (counter_query(ctx, flow, &qc) != 0)
         return -1;
     *hits = qc.hits_set ? qc.hits : 0;
     if (bytes != NULL)
         *bytes = qc.bytes_set ? qc.bytes : 0;
     return 0;
+}
+
+int bf_flow_counter_reset(struct bf_flow_ctx *ctx, struct rte_flow *flow)
+{
+    struct rte_flow_query_count qc = { .reset = 1 };
+
+    return counter_query(ctx, flow, &qc);
 }
 
 int bf_flow_miss_read(struct bf_flow_ctx *ctx, uint64_t *packets)

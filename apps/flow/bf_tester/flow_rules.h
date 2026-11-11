@@ -167,6 +167,18 @@ int bf_flow_counter_read(struct bf_flow_ctx *ctx, struct rte_flow *flow,
                          uint64_t *hits, uint64_t *bytes);
 
 /**
+ * @brief Make the counter of a rule count from now on (later reads return the delta).
+ */
+int bf_flow_counter_reset(struct bf_flow_ctx *ctx, struct rte_flow *flow);
+
+/*
+ * mlx5 HWS refreshes the counter values from the HW in the background, every
+ * svc_cycle_time (500 ms by default), and a query returns the last refreshed
+ * value. Waiting this long after the last rule change makes the values current.
+ */
+#define BF_CNT_SETTLE_MS 1000
+
+/**
  * @brief Number of distinct flows in the stream (lcm of the field counts).
  */
 uint64_t bf_flow_distinct_tuples(const struct application_settings *set);

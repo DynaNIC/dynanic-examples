@@ -290,7 +290,7 @@ static void query_flow_counters(struct bf_flow_ctx *ctx)
             zero++;
         }
     }
-    printf("Flow counters (%.2f s): packets %" PRIu64 ", bytes %" PRIu64
+    printf("Flow counters since forwarding start (%.2f s): packets %" PRIu64 ", bytes %" PRIu64
            ", flows without hits %" PRIu64 ", not inserted %" PRIu64 ", query errors %" PRIu64 "\n",
            (double)(rte_get_timer_cycles() - t0) / hz,
            hits_total, bytes_total, zero, missing, errors);
@@ -315,6 +315,18 @@ static uint64_t counter_or_na(struct bf_flow_ctx *ctx, struct rte_flow *flow)
     return hits;
 }
 
+/* Start all per-flow counters from zero (the final query then covers only forwarding). */
+static void reset_flow_counters(struct bf_flow_ctx *ctx)
+{
+    uint64_t errors = 0;
+
+    for (uint64_t i = 0; i < ctx->nb_flows; i++)
+        if (ctx->flows[i] != NULL && bf_flow_counter_reset(ctx, ctx->flows[i]) != 0)
+            errors++;
+    if (errors != 0)
+        printf("WARNING: %" PRIu64 " flow counters could not be reset.\n", errors);
+}
+
 static void traffic_loop(struct bf_flow_ctx *ctx, const struct application_settings *s)
 {
     struct bf_stats st;
@@ -327,6 +339,17 @@ static void traffic_loop(struct bf_flow_ctx *ctx, const struct application_setti
             usleep(100000);
         return;
     }
+
+    /*
+     * The counters (miss, per-flow) return the value of the last background
+     * refresh. Wait for a refresh after the last rule was inserted, so the
+     * starting values no longer include packets from the insertion phase.
+     */
+    printf("\nWaiting %u ms for the counter values to refresh...\n", BF_CNT_SETTLE_MS);
+    for (unsigned ms = 0; ms < BF_CNT_SETTLE_MS && !g_stop; ms += 10)
+        usleep(10000);
+    if (s->mode->per_flow && s->mode->count)
+        reset_flow_counters(ctx);
 
     if (bf_stats_init(&st, PORT_ID,
                       counter_or_na(ctx, match), miss_or_na(ctx)) != 0) {

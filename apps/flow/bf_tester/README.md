@@ -132,3 +132,9 @@ lcores take a lock around `rte_flow_create()`): mlx5 in DPDK 25.11 takes the
 counter of every sync rule from the cache of flow queue 0, a single-producer /
 single-consumer ring, and parallel calls corrupt it (crash or failed
 insertion). 2M rules with a counter take ~30 s.
+
+Before forwarding starts the app waits 1 s, because the mlx5 counter values
+are refreshed in the background (every 500 ms by default) and a query returns
+the last refreshed value. Then it resets the per-flow counters, so the counters,
+the rates and the summary all cover only the forwarding phase. Spirent can run
+the whole time.
