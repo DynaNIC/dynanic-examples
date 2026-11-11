@@ -1240,6 +1240,14 @@ meter: paket projde match, 3 action STE, counter a meter. To vše je per flow.
 C: per flow je jen match, 1 action STE (counter + meter + jump), counter a meter. Pak následuje malá tabulka s 2000 pravidly a 2000 metery, která se do cache nejspíš vejde.
 Pokud to platí, mohly by zrychlit i ostatní módy, kdyby se VLAN, MAC a RSS přesunuly do malé sdílené navazující tabulky. Tenhle nápad jsem nezkoušela.
 
+# jine
+Meter s color checkem stal 3Gb
+
+meter (dřívější běh)	200,0 Gbps
+meter --color-check	197,7 Gbps
+
+
+Chyba v mlx5 při čtení counterů (silné důkazy). Per-flow countery od 65 537. dál ukazují hodnoty counterů 0–65 535.
 ---
 
 TODO nedela mi tam bordel kdyz posilam vlan stejnou? Nechodi mi to kam nema?
