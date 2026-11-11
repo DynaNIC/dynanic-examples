@@ -358,8 +358,226 @@ Rules inserted: 2002000 ok, 0 failed in 21.315 s = 0.094 Mrules/s
 
 Už na 4M vidíme mírný pokles, který začne být více patrný pro 8M a nejvíc pak pro 16M. Trochu pomůže rozdělit pravidla přes tabulky, ale i tam nakonec není kam zvětšovat. Více tabulek už nepřinese zlepšení.
 
+Druhy den jsem pro mereni 2M s jednou tabulkou dostala jina cislo... Proc thou
+```
+[xpatov00@dpdk-test12 xpatov00]$ sudo ./bf_tester_build/build/flow/bf_tester/bf_tester -a 0000:21:00.0,dv_flow_en=2 -n 6 -l 96-112 --socket-mem=4096 -- --src-ip 192.85.1.2,2000 --src-port 1024,1001 -M per-flow --sync
+EAL: Detected CPU lcores: 128
+EAL: Detected NUMA nodes: 1
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'VA'
+EAL: VFIO support initialized
+EAL: TOPOLOGY - core count: l1 17, l2 17, l3 17, l4 0, io 17
+
+=== bf_tester ===
+Mode:            per-flow (one exact 5-tuple rule per flow -> RSS to hairpin queues)
+Queues:          1 standard (0-0), 8 hairpin (1-8)
+Rule API:        sync (rte_flow_create)
+Statistics:      on
+Miss check:      off
+Flows:           2002000
+  first #0: 192.85.1.2:1024 -> 192.0.0.1:1024 tcp
+  last  #2001999: 192.85.8.209:2024 -> 192.0.0.1:1024 tcp
+Lcores:          17 (1 main + 16 inserting workers)
+
+
+=== Flow setup ===
+Port:            0 (mlx5_pci), max rxq 1024, max txq 1024
+Steering:        HW (dv_flow_en=2), counters 0 used of max 15728640
+Rules:           group 0  all -> jump group 1
+                 group 1  2002000 x tcp 5-tuple -> RSS to hairpin queues 1-8 (inserted below)
+                 group 1  miss -> drop
+Sync API:
+  Insertion:     rte_flow_create(), 16 worker lcore(s) in parallel
+
+Inserting 2002000 rules on 16 lcore(s), sync rte_flow_create()...
+Rules inserted: 2002000 ok, 0 failed in 18.104 s = 0.111 Mrules/s
+```
+
+```
+=== Traffic summary (23.6 s) ===
+  RX average                      65.53 Mpps     390.11 Gbps
+  TX average                      35.49 Mpps     211.58 Gbps
+  rx_phy_packets                     1548715342
+  rx_phy_bytes                    1152489456938
+  tx_phy_packets                      838701345
+  tx_phy_bytes                     625080973684
+  rx_phy_discard_packets              710220979
+  tx_phy_discard_packets                      0
+  rx_out_of_buffer                            0
+  hairpin_out_of_buffer                       0
+  rx - tx                             710013997
+```
+
+Nevím jestli to tak bylo i včera, ale vyhodila jsem druhý mlx port z VLAN a dala jsem ho down a už je rychlost zpátky (down port sám o sobě nepomohlo, možná nemá vliv)
+
 # Modify
-TODO musime ještě prvně doiplementovat
+Po pokusech jsem rozdělila na dvě části jednu čistě edit a druhou plus vkládání vlan. Aby bylo vidět co z toho stojí více. Ukázalo se že jen edit MAC je v pohodě.
+
+Používám jednu tabulku.
+
+## 2M edit_mac
+```
+[xpatov00@dpdk-test12 xpatov00]$ sudo ./bf_tester_build/build/flow/bf_tester/bf_tester -a 0000:21:00.0,dv_flow_en=2 -n 6 -l 96-112 --socket-mem=4096 -- --src-ip 192.85.1.2,2000 --src-port 1024,1001 -M edit_mac --sync
+EAL: Detected CPU lcores: 128
+EAL: Detected NUMA nodes: 1
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'VA'
+EAL: VFIO support initialized
+EAL: TOPOLOGY - core count: l1 17, l2 17, l3 17, l4 0, io 17
+
+=== bf_tester ===
+Mode:            edit_mac (per-flow + set the source MAC to the port MAC)
+Queues:          1 standard (0-0), 8 hairpin (1-8)
+Rule API:        sync (rte_flow_create)
+Statistics:      on
+Miss check:      off
+Flows:           2002000
+  first #0: 192.85.1.2:1024 -> 192.0.0.1:1024 tcp
+  last  #2001999: 192.85.8.209:2024 -> 192.0.0.1:1024 tcp
+Lcores:          17 (1 main + 16 inserting workers)
+
+
+=== Flow setup ===
+Port:            0 (mlx5_pci), max rxq 1024, max txq 1024
+Steering:        HW (dv_flow_en=2), counters 0 used of max 15728640
+Rules:           group 0  all -> jump group 1
+                 group 1  2002000 x tcp 5-tuple -> src MAC := E8:9E:49:7F:27:CE, RSS to hairpin queues 1-8 (inserted below)
+                 group 1  miss -> drop
+Sync API:
+  Insertion:     rte_flow_create(), 16 worker lcore(s) in parallel
+
+Inserting 2002000 rules on 16 lcore(s), sync rte_flow_create()...
+Rules inserted: 2002000 ok, 0 failed in 22.785 s = 0.088 Mrules/s
+```
+
+```
+=== Traffic summary (60.6 s) ===
+  RX average                      65.47 Mpps     389.76 Gbps
+  TX average                      65.47 Mpps     389.73 Gbps
+  rx_phy_packets                     3970013610
+  rx_phy_bytes                    2954309483584
+  tx_phy_packets                     3969727898
+  tx_phy_bytes                    2954061010750
+  rx_phy_discard_packets                      0
+  tx_phy_discard_packets                      0
+  rx_out_of_buffer                            0
+  hairpin_out_of_buffer                       0
+  rx - tx                                285712
+```
+
+## 16M edit_mac
+```
+[xpatov00@dpdk-test12 xpatov00]$ sudo ./bf_tester_build/build/flow/bf_tester/bf_tester -a 0000:21:00.0,dv_flow_en=2 -n 6 -l 96-112 --socket-mem=4096 -- --src-ip 192.85.1.2,16000 --src-port 1024,1001 -M edit_mac --sync
+EAL: Detected CPU lcores: 128
+EAL: Detected NUMA nodes: 1
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'VA'
+EAL: VFIO support initialized
+EAL: TOPOLOGY - core count: l1 17, l2 17, l3 17, l4 0, io 17
+
+=== bf_tester ===
+Mode:            edit_mac (per-flow + set the source MAC to the port MAC)
+Queues:          1 standard (0-0), 8 hairpin (1-8)
+Rule API:        sync (rte_flow_create)
+Statistics:      on
+Miss check:      off
+Flows:           16016000
+  first #0: 192.85.1.2:1024 -> 192.0.0.1:1024 tcp
+  last  #16015999: 192.85.63.129:2024 -> 192.0.0.1:1024 tcp
+Lcores:          17 (1 main + 16 inserting workers)
+
+
+=== Flow setup ===
+Port:            0 (mlx5_pci), max rxq 1024, max txq 1024
+Steering:        HW (dv_flow_en=2), counters 0 used of max 15728640
+Rules:           group 0  all -> jump group 1
+                 group 1  16016000 x tcp 5-tuple -> src MAC := E8:9E:49:7F:27:CE, RSS to hairpin queues 1-8 (inserted below)
+                 group 1  miss -> drop
+Sync API:
+  Insertion:     rte_flow_create(), 16 worker lcore(s) in parallel
+
+Inserting 16016000 rules on 16 lcore(s), sync rte_flow_create()...
+Rules inserted: 16016000 ok, 0 failed in 56.228 s = 0.285 Mrules/s
+```
+
+```
+=== Traffic summary (60.3 s) ===
+  RX average                      65.47 Mpps     389.76 Gbps
+  TX average                      39.41 Mpps     236.76 Gbps
+  rx_phy_packets                     3951068007
+  rx_phy_bytes                    2940213270116
+  tx_phy_packets                     2378218204
+  tx_phy_bytes                    1786002321966
+  rx_phy_discard_packets             1551677311
+  tx_phy_discard_packets                      0
+  rx_out_of_buffer                            0
+  hairpin_out_of_buffer                       0
+  rx - tx                            1572849803
+```
+
+Toto měření odpovídá měření bez editu takže zhoršení je jen kvůli přeplnení tabulky viz předchozí měření.
+
+## Add Vlan
+Používám 2M v jedné tabulce
+
+```
+[xpatov00@dpdk-test12 xpatov00]$ sudo ./bf_tester_build/build/flow/bf_tester/bf_tester -a 0000:21:00.0,dv_flow_en=2 -n 6 -l 96-112 --socket-mem=4096 -- --src-ip 192.85.1.2,2000 --src-port 1024,1001 -M insert --sync
+EAL: Detected CPU lcores: 128
+EAL: Detected NUMA nodes: 1
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'VA'
+EAL: VFIO support initialized
+EAL: TOPOLOGY - core count: l1 17, l2 17, l3 17, l4 0, io 17
+
+=== bf_tester ===
+Mode:            insert (edit_mac + push VLAN 3)
+Queues:          1 standard (0-0), 8 hairpin (1-8)
+Rule API:        sync (rte_flow_create)
+Statistics:      on
+Miss check:      off
+Flows:           2002000
+  first #0: 192.85.1.2:1024 -> 192.0.0.1:1024 tcp
+  last  #2001999: 192.85.8.209:2024 -> 192.0.0.1:1024 tcp
+Lcores:          17 (1 main + 16 inserting workers)
+
+
+=== Flow setup ===
+Port:            0 (mlx5_pci), max rxq 1024, max txq 1024
+Steering:        HW (dv_flow_en=2), counters 0 used of max 15728640
+Rules:           group 0  all -> jump group 1
+                 group 1  2002000 x tcp 5-tuple -> push VLAN 3, src MAC := E8:9E:49:7F:27:CE, RSS to hairpin queues 1-8 (inserted below)
+                 group 1  miss -> drop
+Sync API:
+  Insertion:     rte_flow_create(), 16 worker lcore(s) in parallel
+
+Inserting 2002000 rules on 16 lcore(s), sync rte_flow_create()...
+Rules inserted: 2002000 ok, 0 failed in 25.315 s = 0.079 Mrules/s
+```
+
+```
+=== Traffic summary (65.2 s) ===
+  RX average                      65.47 Mpps     389.75 Gbps
+  TX average                      43.97 Mpps     266.14 Gbps
+  rx_phy_packets                     4267420032
+  rx_phy_bytes                    3175634581312
+  tx_phy_packets                     2866091262
+  tx_phy_bytes                    2168487118042
+  rx_phy_discard_packets             1385485312
+  tx_phy_discard_packets                      0
+  rx_out_of_buffer                            0
+  hairpin_out_of_buffer                       0
+  rx - tx                            1401328770
+```
+
+Co by se dalo zkusit:
+
+- Přesunout push VLAN na odchozí stranu. Při tx_explicit hairpinu přidat egress pravidlo, které VLAN vloží až při odesílání. Ingress by pak dělal jen vyhledání a RSS a reparse by se přesunul do TX části karty, která je teď volnější. Jistota, že to pomůže: nízká až střední. Že HW steering egress pravidla s push VLAN podporuje, je podle tabulky pořadí akcí pro NIC_TX ověřené. Jak přesně v HWS vybrat jen hairpin provoz, jsem neověřovala.
+- Diagnostika: změřit push VLAN s jediným pravidlem (jako single). Pokud propad zůstane, je to pevný náklad na paket (reparse) a s počtem pravidel nesouvisí. Pokud ne, souvisí s velikostí tabulky. Jistota, že to od sebe odliší: vysoká. Vyžadovalo by to malou úpravu kódu.
+- Spíš nepomůže: vložit VLAN jinou cestou (RAW_ENCAP). Encap čte data z dodatečné paměti a reparse má taky. Jistota střední.
 
 ---
 
