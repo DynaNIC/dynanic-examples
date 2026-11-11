@@ -47,8 +47,11 @@ void bf_split_items(const struct bf_flow_ctx *ctx, uint16_t table,
 /* Main table (0..N-1) of flow idx, from the lowest bits of its source IP. */
 uint16_t bf_table_of(const struct bf_flow_ctx *ctx, uint64_t idx);
 
-/* Actions of the group 1 rules, given by the mode. Returns the count incl. END. */
+/* Actions of the main rules, given by the mode. Returns the count incl. END. */
 unsigned bf_main_actions(const struct bf_flow_ctx *ctx, struct rte_flow_action *acts);
+
+/* The same actions with the masks for the async actions template (all values fixed). */
+unsigned bf_main_masks(const struct bf_flow_ctx *ctx, struct rte_flow_action *masks);
 
 /* Actions of the miss rule: drop, with a counter when --check-miss is on. */
 const struct rte_flow_action *bf_miss_actions(const struct bf_flow_ctx *ctx);

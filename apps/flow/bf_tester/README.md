@@ -18,7 +18,8 @@ everything from the previous one.
 |------------|------|------------------------------------------------------------|-----------------|
 | `single`   | base | one `eth / ipv4 / tcp` rule → RSS(ipv4-tcp) to hairpin q.  | implemented     |
 | `per-flow` | 1    | one exact TCP 5-tuple rule per flow → RSS to hairpin q.    | implemented     |
-| `edit`     | 2    | + push MPLS header, modify MAC                             | not implemented |
+| `edit_mac` | 2a   | + source MAC := port MAC (fixed value)                     | implemented     |
+| `insert`   | 2b   | + push VLAN 3 (fixed value)                                | implemented     |
 | `count`    | 3a   | + counter per rule                                         | not implemented |
 | `meter`    | 3b   | + meter per rule                                           | not implemented |
 | `all`      | 4    | + counter and two meters per rule                          | not implemented |
@@ -113,11 +114,11 @@ summary prints an OK/FAILED verdict.
 The features of each mode are in `bf_mode_table` (`argparse.c`). To implement
 one, set `.implemented = true` and fill the TODOs in `flow_rules.c`:
 
-* `main_actions()`: add the actions (MPLS push, `MODIFY_FIELD`, `METER_MARK`)
-  with masks leaving the per-rule values unmasked;
+* `main_actions_build()`: add the actions (e.g. `METER_MARK`) in the order the
+  HW applies them (counter, meters, push VLAN, modify, fate action);
 * `bf_flow_engine_configure()`: reserve meters (`nb_meters`) in
   `rte_flow_configure()`;
-* `bulk_worker()`: fill the per-rule action values.
+* `bf_sync_worker()`: fill per-rule action values if they differ per flow.
 
 Counters are already wired: in `count` and later modes a counter is attached
 to every rule and at exit the app reports how many flows received no packets.

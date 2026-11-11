@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include <rte_ether.h>
 #include <rte_flow.h>
 
 #include "argparse.h"
@@ -30,6 +31,10 @@
  * performance (measured: 95 % fill -> 334 Gbps instead of 390 Gbps).
  */
 #define BF_TABLE_MAX_FILL_PCT 70
+
+/* Insert mode: VLAN ID pushed onto every forwarded packet; the test VLAN of the
+ * switch, so the switch accepts the tagged frames on the access port. */
+#define BF_INSERT_VLAN_ID 3
 
 struct bf_flow_ctx {
     uint16_t port_id;
@@ -49,6 +54,14 @@ struct bf_flow_ctx {
     /* RSS action spreading matched traffic over the hairpin queues. */
     uint16_t *hp_queues;
     struct rte_flow_action_rss rss;
+
+    /* edit_mac / insert modes: set the source MAC to the port's MAC and push a VLAN
+     * (same values for all rules). */
+    struct rte_ether_addr port_mac;
+    struct rte_flow_action_of_push_vlan push_vlan;
+    struct rte_flow_action_of_set_vlan_vid set_vlan_vid;
+    struct rte_flow_action_modify_field set_src_mac;
+    struct rte_flow_action_modify_field set_src_mac_mask;   /* async template mask */
 
     /*
      * Main tables (--tables N): table t lives in group BF_MAIN_GROUP + t and

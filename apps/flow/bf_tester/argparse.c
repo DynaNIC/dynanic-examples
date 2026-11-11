@@ -32,25 +32,30 @@ static const struct bf_mode_info bf_mode_table[BF_MODE_MAX] = {
         .desc = "one exact 5-tuple rule per flow -> RSS to hairpin queues",
         .per_flow = true,
     },
-    [BF_MODE_EDIT] = {
-        .id = BF_MODE_EDIT, .name = "edit", .implemented = false,
-        .desc = "per-flow + push MPLS header and modify MAC",
-        .per_flow = true, .edit = true,
+    [BF_MODE_EDIT_MAC] = {
+        .id = BF_MODE_EDIT_MAC, .name = "edit_mac", .implemented = true,
+        .desc = "per-flow + set the source MAC to the port MAC",
+        .per_flow = true, .set_mac = true,
+    },
+    [BF_MODE_INSERT] = {
+        .id = BF_MODE_INSERT, .name = "insert", .implemented = true,
+        .desc = "edit_mac + push VLAN 3",
+        .per_flow = true, .set_mac = true, .push_vlan = true,
     },
     [BF_MODE_COUNT] = {
         .id = BF_MODE_COUNT, .name = "count", .implemented = false,
-        .desc = "edit + counter per rule",
-        .per_flow = true, .edit = true, .count = true,
+        .desc = "insert + counter per rule",
+        .per_flow = true, .set_mac = true, .push_vlan = true, .count = true,
     },
     [BF_MODE_METER] = {
         .id = BF_MODE_METER, .name = "meter", .implemented = false,
         .desc = "count + meter per rule",
-        .per_flow = true, .edit = true, .count = true, .nb_meters = 1,
+        .per_flow = true, .set_mac = true, .push_vlan = true, .count = true, .nb_meters = 1,
     },
     [BF_MODE_ALL] = {
         .id = BF_MODE_ALL, .name = "all", .implemented = false,
-        .desc = "edit + counter and two meters per rule",
-        .per_flow = true, .edit = true, .count = true, .nb_meters = 2,
+        .desc = "insert + counter and two meters per rule",
+        .per_flow = true, .set_mac = true, .push_vlan = true, .count = true, .nb_meters = 2,
     },
 };
 

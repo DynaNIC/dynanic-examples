@@ -148,6 +148,34 @@ static void tables_setup(struct bf_flow_ctx *ctx)
         ctx->table_flows[bf_table_of(ctx, i)]++;
 }
 
+/*
+ * edit_mac / insert modes: set the source MAC to the port's own MAC, as a router
+ * would (the destination MAC stays, so Spirent still gets the packets), and push
+ * VLAN BF_INSERT_VLAN_ID.
+ */
+static void edit_setup(struct bf_flow_ctx *ctx)
+{
+    rte_eth_macaddr_get(ctx->port_id, &ctx->port_mac);
+    ctx->push_vlan.ethertype = RTE_BE16(RTE_ETHER_TYPE_VLAN);
+    ctx->set_vlan_vid.vlan_vid = rte_cpu_to_be_16(BF_INSERT_VLAN_ID);
+
+    ctx->set_src_mac = (struct rte_flow_action_modify_field){
+        .operation = RTE_FLOW_MODIFY_SET,
+        .dst = { .field = RTE_FLOW_FIELD_MAC_SRC },
+        .src = { .field = RTE_FLOW_FIELD_VALUE },
+        .width = 48,
+    };
+    /* Immediate value in the same byte order as in rte_flow_item_eth. */
+    memcpy(ctx->set_src_mac.src.value, ctx->port_mac.addr_bytes, RTE_ETHER_ADDR_LEN);
+
+    /* Async template mask: all fixed; HWS wants levels, offsets and width fully masked
+     * (the PMD builds the same mask itself for sync rules). */
+    memset(&ctx->set_src_mac_mask, 0xff, sizeof(ctx->set_src_mac_mask));
+    ctx->set_src_mac_mask.operation = ctx->set_src_mac.operation;
+    ctx->set_src_mac_mask.dst.field = ctx->set_src_mac.dst.field;
+    ctx->set_src_mac_mask.src.field = ctx->set_src_mac.src.field;
+}
+
 int bf_flow_engine_configure(struct bf_flow_ctx *ctx, uint16_t port_id,
                              const struct application_settings *set,
                              uint16_t first_hp_queue, uint16_t nb_flow_queues)
@@ -162,6 +190,8 @@ int bf_flow_engine_configure(struct bf_flow_ctx *ctx, uint16_t port_id,
     ctx->nb_flows = set->mode->per_flow ? set->nb_flows : 0;
     ctx->nb_flow_queues = nb_flow_queues;
     tables_setup(ctx);
+    if (set->mode->set_mac || set->mode->push_vlan)
+        edit_setup(ctx);
 
     /* rte_flow_info_get() works only with HW steering (dv_flow_en=2). */
     memset(&pinfo, 0, sizeof(pinfo));
@@ -296,23 +326,45 @@ const struct rte_flow_action *bf_miss_actions(const struct bf_flow_ctx *ctx)
 }
 
 /* The mode decides the actions; RSS to the hairpin queues is always last. */
-unsigned bf_main_actions(const struct bf_flow_ctx *ctx, struct rte_flow_action *a)
+/*
+ * Actions of the main rules. The list follows the order the HW applies them
+ * (counter, meters, push VLAN, modify header, then the fate action), otherwise
+ * the PMD rejects the template. mask = true gives the async template masks.
+ */
+static unsigned main_actions_build(const struct bf_flow_ctx *ctx, struct rte_flow_action *a, bool mask)
 {
     const struct bf_mode_info *mode = ctx->set->mode;
     unsigned n = 0;
 
-    if (mode->edit) {
-        /* TODO (mode edit): push MPLS header and modify MAC address. */
-    }
     if (mode->count)
         a[n++] = (struct rte_flow_action){ .type = RTE_FLOW_ACTION_TYPE_COUNT };
     for (uint8_t m = 0; m < mode->nb_meters; m++) {
         /* TODO (modes meter, all): METER_MARK action, objects reserved
          * through nb_meters in rte_flow_configure(). */
     }
+    if (mode->push_vlan) {
+        /* SET_VLAN_VID must follow OF_PUSH_VLAN directly. */
+        a[n++] = (struct rte_flow_action){ .type = RTE_FLOW_ACTION_TYPE_OF_PUSH_VLAN,
+                                           .conf = &ctx->push_vlan };
+        a[n++] = (struct rte_flow_action){ .type = RTE_FLOW_ACTION_TYPE_OF_SET_VLAN_VID,
+                                           .conf = &ctx->set_vlan_vid };
+    }
+    if (mode->set_mac)
+        a[n++] = (struct rte_flow_action){ .type = RTE_FLOW_ACTION_TYPE_MODIFY_FIELD,
+                                           .conf = mask ? &ctx->set_src_mac_mask : &ctx->set_src_mac };
     a[n++] = (struct rte_flow_action){ .type = RTE_FLOW_ACTION_TYPE_RSS, .conf = &ctx->rss };
     a[n++] = (struct rte_flow_action){ .type = RTE_FLOW_ACTION_TYPE_END };
     return n;
+}
+
+unsigned bf_main_actions(const struct bf_flow_ctx *ctx, struct rte_flow_action *a)
+{
+    return main_actions_build(ctx, a, false);
+}
+
+unsigned bf_main_masks(const struct bf_flow_ctx *ctx, struct rte_flow_action *a)
+{
+    return main_actions_build(ctx, a, true);
 }
 
 /* ------------------------------------------------------------------------ */

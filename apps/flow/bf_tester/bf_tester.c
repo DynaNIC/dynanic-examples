@@ -131,12 +131,25 @@ static void print_flow_setup(const struct bf_flow_ctx *ctx, const struct applica
     else
         printf("Rules:           group 0  src IP & %u == t -> jump group 1+t (%u rules), rest -> group 1\n",
                ctx->nb_tables - 1, ctx->nb_tables);
+    /* What the main rules do with a packet, in HW order. */
+    char acts[160];
+    int len = 0;
+    if (s->mode->count)
+        len += snprintf(acts + len, sizeof(acts) - len, "count, ");
+    if (s->mode->push_vlan)
+        len += snprintf(acts + len, sizeof(acts) - len, "push VLAN %u, ", BF_INSERT_VLAN_ID);
+    if (s->mode->set_mac) {
+        char mac[RTE_ETHER_ADDR_FMT_SIZE];
+        rte_ether_format_addr(mac, sizeof(mac), &ctx->port_mac);
+        len += snprintf(acts + len, sizeof(acts) - len, "src MAC := %s, ", mac);
+    }
+    snprintf(acts + len, sizeof(acts) - len, "RSS to hairpin queues %u-%u", nb_std, hp_last);
+
     if (s->mode->per_flow)
-        printf("                 %s  %" PRIu64 " x tcp 5-tuple -> RSS to hairpin queues %u-%u"
-               " (inserted below)\n", groups, s->nb_flows, nb_std, hp_last);
+        printf("                 %s  %" PRIu64 " x tcp 5-tuple -> %s (inserted below)\n",
+               groups, s->nb_flows, acts);
     else
-        printf("                 %s  eth/ipv4/tcp -> RSS to hairpin queues %u-%u\n",
-               groups, nb_std, hp_last);
+        printf("                 %s  eth/ipv4/tcp -> %s\n", groups, acts);
     printf("                 %s  miss -> %s\n", groups, s->check_miss ? "count + drop" : "drop");
     if (ctx->nb_tables > 1) {
         printf("                 rules per group:");

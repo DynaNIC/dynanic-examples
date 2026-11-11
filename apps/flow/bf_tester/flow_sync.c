@@ -90,7 +90,7 @@ int bf_sync_worker(struct bf_worker *w)
             break;
         }
         bf_fill_5tuple(set, i, &ip, &tcp);
-        /* TODO (modes edit..all): fill per-rule action values (MAC, MPLS label, meter). */
+        /* TODO (modes edit_mac..all): fill per-rule action values (MAC, MPLS label, meter). */
 
         if (rule_create(ctx, "rte_flow_create()", BF_MAIN_GROUP + bf_table_of(ctx, i), 0,
                         items, acts, &ctx->flows[i]) < 0) {

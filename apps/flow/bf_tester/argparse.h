@@ -22,7 +22,8 @@
 enum bf_mode {
     BF_MODE_SINGLE = 0, /* baseline: one eth/ipv4/tcp rule -> hairpin */
     BF_MODE_PER_FLOW,   /* 1:  one exact 5-tuple rule per flow */
-    BF_MODE_EDIT,       /* 2:  + push MPLS, modify MAC */
+    BF_MODE_EDIT_MAC,   /* 2a: + set the source MAC */
+    BF_MODE_INSERT,     /* 2b: + push VLAN (header insertion) */
     BF_MODE_COUNT,      /* 3a: + counter per rule */
     BF_MODE_METER,      /* 3b: + meter per rule */
     BF_MODE_ALL,        /* 4:  + counter and two meters per rule */
@@ -35,7 +36,8 @@ struct bf_mode_info {
     const char *desc;
     bool implemented;
     bool per_flow;      /* one rule per flow instead of one catch-all rule */
-    bool edit;          /* push MPLS header and modify MAC address */
+    bool set_mac;       /* set the source MAC to the port's MAC */
+    bool push_vlan;     /* push a VLAN header */
     bool count;         /* counter per rule */
     uint8_t nb_meters;  /* meters per rule */
 };

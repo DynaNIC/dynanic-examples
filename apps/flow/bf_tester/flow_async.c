@@ -207,8 +207,10 @@ int bf_async_tables_create(struct bf_flow_ctx *ctx)
      * rule; the jump has no mask conf, so each rule sets its target group. */
     bf_jump_actions(ctx, 0, acts);
     ctx->at_jump = actions_template(ctx, "actions template 'jump'", acts, bf_jump_masks);
+    struct rte_flow_action main_masks[BF_MAX_ACTIONS];
     bf_main_actions(ctx, acts);
-    ctx->at_main = actions_template(ctx, "actions template 'main'", acts, acts);
+    bf_main_masks(ctx, main_masks);
+    ctx->at_main = actions_template(ctx, "actions template 'main'", acts, main_masks);
     ctx->at_miss = actions_template(ctx, "actions template 'miss'",
                                     bf_miss_actions(ctx), bf_miss_actions(ctx));
     if (ctx->at_jump == NULL || ctx->at_main == NULL || ctx->at_miss == NULL)
@@ -343,7 +345,7 @@ int bf_async_worker(struct bf_worker *w)
             break;
         }
         bf_fill_5tuple(set, i, &ip, &tcp);
-        /* TODO (modes edit..all): fill per-rule action values (MAC, MPLS label, meter). */
+        /* TODO (modes edit_mac..all): fill per-rule action values (MAC, MPLS label, meter). */
 
         if (rule_enqueue(ctx, &q, "rte_flow_async_create()", ctx->tbl_main[bf_table_of(ctx, i)],
                          items, acts, &ctx->flows[i]) < 0) {
