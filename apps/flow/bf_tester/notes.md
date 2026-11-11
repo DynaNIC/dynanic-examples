@@ -579,6 +579,57 @@ Co by se dalo zkusit:
 - Diagnostika: změřit push VLAN s jediným pravidlem (jako single). Pokud propad zůstane, je to pevný náklad na paket (reparse) a s počtem pravidel nesouvisí. Pokud ne, souvisí s velikostí tabulky. Jistota, že to od sebe odliší: vysoká. Vyžadovalo by to malou úpravu kódu.
 - Spíš nepomůže: vložit VLAN jinou cestou (RAW_ENCAP). Encap čte data z dodatečné paměti a reparse má taky. Jistota střední.
 
+Egress vypadá, že opravdu pomohl...
+```
+[xpatov00@dpdk-test12 xpatov00]$ sudo ./bf_tester_build/build/flow/bf_tester/bf_tester -a 0000:21:00.0,dv_flow_en=2 -n 6 -l 96-112 --socket-mem=4096 -- --src-ip 192.85.1.2,2000 --src-port 1024,1001 -M insert --sync
+EAL: Detected CPU lcores: 128
+EAL: Detected NUMA nodes: 1
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'VA'
+EAL: VFIO support initialized
+EAL: TOPOLOGY - core count: l1 17, l2 17, l3 17, l4 0, io 17
+
+=== bf_tester ===
+Mode:            insert (edit_mac + push VLAN 3)
+Queues:          1 standard (0-0), 8 hairpin (1-8)
+Rule API:        sync (rte_flow_create)
+Statistics:      on
+Miss check:      off
+Flows:           2002000
+  first #0: 192.85.1.2:1024 -> 192.0.0.1:1024 tcp
+  last  #2001999: 192.85.8.209:2024 -> 192.0.0.1:1024 tcp
+Lcores:          17 (1 main + 16 inserting workers)
+
+
+=== Flow setup ===
+Port:            0 (mlx5_pci), max rxq 1024, max txq 1024
+Steering:        HW (dv_flow_en=2), counters 0 used of max 15728640
+Rules:           group 0  all -> jump group 1
+                 group 1  2002000 x tcp 5-tuple -> push VLAN 3 (egress), src MAC := E8:9E:49:7F:27:CE, RSS to hairpin queues 1-8 (inserted below)
+                 group 1  miss -> drop
+Sync API:
+  Insertion:     rte_flow_create(), 16 worker lcore(s) in parallel
+
+Inserting 2002000 rules on 16 lcore(s), sync rte_flow_create()...
+Rules inserted: 2002000 ok, 0 failed in 22.783 s = 0.088 Mrules/s
+```
+
+```
+=== Traffic summary (60.4 s) ===
+  RX average                      65.47 Mpps     389.76 Gbps
+  TX average                      65.18 Mpps     389.79 Gbps
+  rx_phy_packets                     3953163687
+  rx_phy_bytes                    2941775174526
+  tx_phy_packets                     3935817728
+  tx_phy_bytes                    2942022249412
+  rx_phy_discard_packets                      0
+  tx_phy_discard_packets                      0
+  rx_out_of_buffer                            0
+  hairpin_out_of_buffer                       0
+  rx - tx                              17345959
+```
+
 ---
 
 ## Poznámky
