@@ -14,7 +14,7 @@ Measure a BlueField-3 forwarding Spirent traffic back through hairpin queues wit
 | 1 | `per-flow`: one exact TCP 5-tuple rule per flow, 2M/4M/8M/16M flows | done |
 | 2a | `edit_mac`: + source MAC := port MAC | done |
 | 2b | `insert`: + push VLAN 3 | done (slow on ingress, see below) |
-| 3a | `count`: + counter per rule | not implemented |
+| 3a | `count`: + counter per rule | implemented, not measured |
 | 3b | `meter`: + meter per rule | not implemented |
 | 4 | `all`: + counter and two meters per rule | not implemented |
 
@@ -134,6 +134,38 @@ Rule layout:
   The hypothesis is that the reparse costs ingress capacity. No DPDK devarg controls it.
 - `QUEUE` instead of `RSS` would not help: both map to `MLX5DR_ACTION_TYP_TIR`.
 
+**Mode 3a `count`, 2M, sync, VLAN pushed on ingress (first runs, not a measurement):**
+- Parallel `rte_flow_create()` with counters crashes or fails (`Resizing in progress, cannot create rule`).
+  Cause found in the code: sync rules call `flow_hw_actions_construct(..., queue = 0, ...)`
+  (`mlx5_flow_hw.c:13802`), so every counter comes from the cache of queue 0, an SP/SC ring
+  (`mlx5_hws_cnt.c:404`). The cache is enabled when many counters are requested.
+  The app now serializes the calls (`sync_lock`): 2M rules in ~32 s with 16 lcores, ~30 s with 1.
+- TX ~275–285 Gbps (ingress VLAN alone gave 267.6). `--egress-vlan` with `count` not tried yet.
+- HWS counter values are refreshed in the background (`svc_cycle_time`, 500 ms by default
+  upstream), and a query returns the last refreshed value. So the app waits `BF_CNT_SETTLE_MS`
+  (1 s) after the insertion and then resets the per-flow counters before forwarding starts.
+  - Without the wait, the miss counter showed 67k–502k packets in the first interval only (stale baseline).
+    With the wait it shows 0.
+  - Without the reset, the per-flow sum was ~16G packets, ~3x more than the port could have received
+    since the rules were created. Cause not found (the counter values taken at allocation may be stale).
+    With the reset, the sum is 2.128G against tx_phy 2.070G (+2.8 %) over 45 s.
+  - After the reset, 30 of 2M flows show no hits, although miss is 0 (in every run). Not explained.
+
+**Insertion order changes forwarding (2M, sync, ingress VLAN, measured back to back):**
+
+| Mode | Inserting lcores | TX |
+|---|---|---|
+| insert | 1 | 293.1 Gbps |
+| count | 1 | 285.5 Gbps |
+| count | 16, serialized | 275.3 Gbps |
+| insert | 16, parallel | 267.6 Gbps (older run, not repeated) |
+
+- With the same insertion, the counter costs ~8 Gbps. "count faster than insert" came from comparing
+  different insertions.
+- The same rules inserted in a different order forward differently, by ~10 Gbps for count.
+  The probable cause is the layout of the BWC matcher (rehash points, collisions); not verified.
+- Measurements are comparable only with the same insertion (number of lcores).
+
 **Async (reference only):** forwards slower than sync with many rules:
 - 2M rules at 95 % fill: 334 Gbps.
 - 4M rules at 48 % fill: 330 Gbps.
@@ -149,10 +181,12 @@ reorders the key for IPv4-address hashing, which suits this stream badly. An unt
    - Allowed only in modes that push a VLAN (`insert` and later) and only with `--sync`.
    - It adds two egress rules (egress group 0 jumps to 1, group 1 pushes VLAN 3) and
      no VLAN push in the ingress rules.
-2. **`--check-miss` does not print the miss result.**
-   `bf_flow_counter_read()` → `rte_flow_query()` fails on the miss rules,
-   so the summary has no miss line or verdict. Not investigated.
-3. **Modes `count`, `meter`, `all`.** See the TODOs in `main_actions_build()`.
+2. **`--check-miss` did not print the miss result.**
+   `bf_flow_counter_read()` → `rte_flow_query()` failed on the miss rules.
+   Probable cause, found in the code: mlx5 `flow_hw_query()` walks the actions up to END, and the app
+   passed a single COUNT action without END. Fixed with the `count` mode; the miss line and the
+   verdict now print (verified on the card), but see the first-interval miss issue under Findings.
+3. **Modes `meter`, `all`.** See the TODOs in `main_actions_build()`.
    Meters need `nb_meters` in `rte_flow_configure()`. Mind the 15.7M counter limit.
 4. **16M: the remaining ~5 % loss** with 8 tables (cache hypothesis above).
 5. **NFB support (analysis only, nothing implemented).**
