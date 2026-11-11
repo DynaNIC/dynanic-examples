@@ -164,8 +164,9 @@ static void print_flow_setup(const struct bf_flow_ctx *ctx, const struct applica
 
     if (s->sync) {
         printf("Sync API:\n");
-        printf("  Insertion:     rte_flow_create(), %u worker lcore(s) in parallel\n",
-               ctx->nb_flow_queues);
+        printf("  Insertion:     rte_flow_create(), %u worker lcore(s) %s\n", ctx->nb_flow_queues,
+               ctx->sync_serialize ? "serialized (mlx5 counter cache is not thread-safe)"
+                                   : "in parallel");
     } else {
         printf("Async API:\n");
         printf("  Flow queues:   %u (one per worker lcore) x %u rule operations in flight,"

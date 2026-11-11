@@ -189,6 +189,8 @@ int bf_flow_engine_configure(struct bf_flow_ctx *ctx, uint16_t port_id,
     ctx->set = set;
     ctx->nb_flows = set->mode->per_flow ? set->nb_flows : 0;
     ctx->nb_flow_queues = nb_flow_queues;
+    ctx->sync_serialize = set->sync && set->mode->count;
+    rte_spinlock_init(&ctx->sync_lock);
     tables_setup(ctx);
     if (set->mode->set_mac || set->mode->push_vlan)
         edit_setup(ctx);

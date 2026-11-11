@@ -129,8 +129,13 @@ int bf_sync_worker(struct bf_worker *w)
         bf_fill_5tuple(set, i, &ip, &tcp);
         /* TODO (modes edit_mac..all): fill per-rule action values (MAC, MPLS label, meter). */
 
-        if (rule_create(ctx, "rte_flow_create()", BF_MAIN_GROUP + bf_table_of(ctx, i), 0,
-                        items, acts, &ctx->flows[i]) < 0) {
+        if (ctx->sync_serialize)
+            rte_spinlock_lock(&ctx->sync_lock);
+        int ret = rule_create(ctx, "rte_flow_create()", BF_MAIN_GROUP + bf_table_of(ctx, i), 0,
+                              items, acts, &ctx->flows[i]);
+        if (ctx->sync_serialize)
+            rte_spinlock_unlock(&ctx->sync_lock);
+        if (ret < 0) {
             /* Most likely a resource limit: stop this lcore, the others go on. */
             w->failed++;
             break;

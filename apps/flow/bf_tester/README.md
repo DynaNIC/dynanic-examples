@@ -20,7 +20,7 @@ everything from the previous one.
 | `per-flow` | 1    | one exact TCP 5-tuple rule per flow → RSS to hairpin q.    | implemented     |
 | `edit_mac` | 2a   | + source MAC := port MAC (fixed value)                     | implemented     |
 | `insert`   | 2b   | + push VLAN 3 (fixed value)                                | implemented     |
-| `count`    | 3a   | + counter per rule                                         | not implemented |
+| `count`    | 3a   | + counter per rule                                         | implemented     |
 | `meter`    | 3b   | + meter per rule                                           | not implemented |
 | `all`      | 4    | + counter and two meters per rule                          | not implemented |
 
@@ -122,5 +122,13 @@ one, set `.implemented = true` and fill the TODOs in `flow_rules.c`:
   `rte_flow_configure()`;
 * `bf_sync_worker()`: fill per-rule action values if they differ per flow.
 
-Counters are already wired: in `count` and later modes a counter is attached
-to every rule and at exit the app reports how many flows received no packets.
+Counters are wired: in `count` and later modes a counter is attached to every
+rule and at exit the app reports how many flows received no packets. The card
+has at most 15,728,640 counters, so 16M rules with a counter each do not fit
+(the app stops with an error before inserting anything).
+
+With `--sync` the rules with a counter are inserted one at a time (the worker
+lcores take a lock around `rte_flow_create()`): mlx5 in DPDK 25.11 takes the
+counter of every sync rule from the cache of flow queue 0, a single-producer /
+single-consumer ring, and parallel calls corrupt it (crash or failed
+insertion). 2M rules with a counter take ~30 s.

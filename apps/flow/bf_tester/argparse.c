@@ -43,7 +43,7 @@ static const struct bf_mode_info bf_mode_table[BF_MODE_MAX] = {
         .per_flow = true, .set_mac = true, .push_vlan = true,
     },
     [BF_MODE_COUNT] = {
-        .id = BF_MODE_COUNT, .name = "count", .implemented = false,
+        .id = BF_MODE_COUNT, .name = "count", .implemented = true,
         .desc = "insert + counter per rule",
         .per_flow = true, .set_mac = true, .push_vlan = true, .count = true,
     },

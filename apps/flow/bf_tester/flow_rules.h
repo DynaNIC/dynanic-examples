@@ -15,6 +15,7 @@
 
 #include <rte_ether.h>
 #include <rte_flow.h>
+#include <rte_spinlock.h>
 
 #include "argparse.h"
 
@@ -50,6 +51,15 @@ struct bf_flow_ctx {
     uint32_t max_counters;
     uint32_t nb_counters;
     uint16_t nb_cfg_queues;     /* flow queues passed to rte_flow_configure() */
+
+    /*
+     * Sync rules with a counter: rte_flow_create() is called under sync_lock.
+     * mlx5 (DPDK 25.11) takes the counter of every sync rule from the cache of
+     * flow queue 0, a single-producer/single-consumer ring, so parallel calls
+     * corrupt it (crash or failed insertion).
+     */
+    bool sync_serialize;
+    rte_spinlock_t sync_lock;
 
     /* RSS action spreading matched traffic over the hairpin queues. */
     uint16_t *hp_queues;
