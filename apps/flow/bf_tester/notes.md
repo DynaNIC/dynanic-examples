@@ -835,6 +835,179 @@ Je to stejný mechanismus jako u hypotézy, že se do cache nevejdou samotná pr
 
 # Meters
 
+```
+[xpatov00@dpdk-test12 ~]$ sudo ./bf_tester_build/build/flow/bf_tester/bf_tester -a 0000:21:00.0,dv_flow_en=2 -n 6 -l 96-112 --socket-mem=4096 -- --src-ip 192.85.1.2,2000 --src-port 1024,1001 -M meter --sync 
+EAL: Detected CPU lcores: 128
+EAL: Detected NUMA nodes: 1
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'VA'
+EAL: VFIO support initialized
+EAL: TOPOLOGY - core count: l1 17, l2 17, l3 17, l4 0, io 17
+
+=== bf_tester ===
+Mode:            meter (count + meter per rule)
+Queues:          1 standard (0-0), 8 hairpin (1-8)
+Rule API:        sync (rte_flow_create)
+Statistics:      on
+Miss check:      off
+Flows:           2002000
+  first #0: 192.85.1.2:1024 -> 192.0.0.1:1024 tcp
+  last  #2001999: 192.85.8.209:2024 -> 192.0.0.1:1024 tcp
+Lcores:          17 (1 main + 16 inserting workers)
+
+
+=== Flow setup ===
+Port:            0 (mlx5_pci), max rxq 1024, max txq 1024
+Steering:        HW (dv_flow_en=2), counters 2002000 used of max 15728640
+                 meters 2002000 used of max 33554432
+Rules:           group 0  all -> jump group 1
+                 group 1  2002000 x tcp 5-tuple -> count, 1 x meter (1000 Mbit/s, mark only), push VLAN 3, src MAC := E8:9E:49:7F:27:CE, RSS to hairpin queues 1-8 (inserted below)
+                 group 1  miss -> drop
+Sync API:
+  Insertion:     rte_flow_create(), 16 worker lcore(s) serialized (mlx5 counters/meters are not thread-safe)
+
+Inserting 2002000 rules on 16 lcore(s), sync rte_flow_create()...
+
+ERROR: rte_flow_create() failed: Action construction failed (error type 1, rte_errno 22: Invalid argument)
+Rules inserted: 1975179 ok, 1 failed in 158.799 s = 0.012 Mrules/s
+
+=== Traffic summary (33.2 s) ===
+  RX average                      65.50 Mpps     389.95 Gbps
+  TX average                      31.53 Mpps     191.92 Gbps
+  rx_phy_packets                     2175130186
+  rx_phy_bytes                    1618635655150
+  tx_phy_packets                     1046982343
+  tx_phy_bytes                     796649418940
+  rx_phy_discard_packets             1107096635
+  tx_phy_discard_packets                      0
+  rx_out_of_buffer                            0
+  hairpin_out_of_buffer                       0
+  rx - tx                            1128147843
+
+Querying 2002000 flow counters...
+Flow counters since forwarding start (0.03 s): packets 1064593800, bytes 801365282320, flows without hits 0, not inserted 26821, query errors 0
+```
+
+Toto mereni je zkresleno kvůli tomu že chybí pravidla, protože se použilo více lcore, která si vyžrala místo a pak se nepodařilo vložit
+
+```
+[xpatov00@dpdk-test12 ~]$ sudo ./bf_tester_build/build/flow/bf_tester/bf_tester -a 0000:21:00.0,dv_flow_en=2 -n 6 -l 96-97 --socket-mem=4096 -- --
+src-ip 192.85.1.2,2000 --src-port 1024,1001 -M meter --sync 
+EAL: Detected CPU lcores: 128
+EAL: Detected NUMA nodes: 1
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'VA'
+EAL: VFIO support initialized
+EAL: TOPOLOGY - core count: l1 2, l2 2, l3 2, l4 0, io 2
+
+=== bf_tester ===
+Mode:            meter (count + meter per rule)
+Queues:          1 standard (0-0), 8 hairpin (1-8)
+Rule API:        sync (rte_flow_create)
+Statistics:      on
+Miss check:      off
+Flows:           2002000
+  first #0: 192.85.1.2:1024 -> 192.0.0.1:1024 tcp
+  last  #2001999: 192.85.8.209:2024 -> 192.0.0.1:1024 tcp
+Lcores:          2 (1 main + 1 inserting workers)
+
+
+=== Flow setup ===
+Port:            0 (mlx5_pci), max rxq 1024, max txq 1024
+Steering:        HW (dv_flow_en=2), counters 2002000 used of max 15728640
+                 meters 2002000 used of max 33554432
+Rules:           group 0  all -> jump group 1
+                 group 1  2002000 x tcp 5-tuple -> count, 1 x meter (1000 Mbit/s, mark only), push VLAN 3, src MAC := E8:9E:49:7F:27:CE, RSS to hairpin queues 1-8 (inserted below)
+                 group 1  miss -> drop
+Sync API:
+  Insertion:     rte_flow_create(), 1 worker lcore(s) serialized (mlx5 counters/meters are not thread-safe)
+
+Inserting 2002000 rules on 1 lcore(s), sync rte_flow_create()...
+Rules inserted: 2002000 ok, 0 failed in 158.694 s = 0.013 Mrules/
+
+=== Traffic summary (61.1 s) ===
+  RX average                      65.47 Mpps     389.76 Gbps
+  TX average                      32.86 Mpps     200.02 Gbps
+  rx_phy_packets                     4002843719
+  rx_phy_bytes                    2978743492144
+  tx_phy_packets                     2009236503
+  tx_phy_bytes                    1528640063638
+  rx_phy_discard_packets             1994499525
+  tx_phy_discard_packets                      0
+  rx_out_of_buffer                            0
+  hairpin_out_of_buffer                       0
+  rx - tx                            1993607216
+
+Querying 2002000 flow counters...
+Flow counters since forwarding start (0.02 s): packets 1997866387, bytes 1504399340682, flows without hits 0, not inserted 0, query errors 0
+```
+
+## egress jeden lcore
+```
+[xpatov00@dpdk-test12 ~]$ sudo ./bf_tester_build/build/flow/bf_tester/bf_tester -a 0000:21:00.0,dv_flow_en=2 -n 6 -l 96-97 --socket-mem=4096 -- --src-ip 192.85.1.2,2000 --src-port 1024,1001 -M meter --sync --egress-vlan
+EAL: Detected CPU lcores: 128
+EAL: Detected NUMA nodes: 1
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'VA'
+EAL: VFIO support initialized
+EAL: TOPOLOGY - core count: l1 2, l2 2, l3 2, l4 0, io 2
+
+=== bf_tester ===
+Mode:            meter (count + meter per rule)
+Queues:          1 standard (0-0), 8 hairpin (1-8)
+Rule API:        sync (rte_flow_create)
+Statistics:      on
+Miss check:      off
+Flows:           2002000
+  first #0: 192.85.1.2:1024 -> 192.0.0.1:1024 tcp
+  last  #2001999: 192.85.8.209:2024 -> 192.0.0.1:1024 tcp
+Lcores:          2 (1 main + 1 inserting workers)
+
+
+=== Flow setup ===
+Port:            0 (mlx5_pci), max rxq 1024, max txq 1024
+Steering:        HW (dv_flow_en=2), counters 2002000 used of max 15728640
+                 meters 2002000 used of max 33554432
+Rules:           group 0  all -> jump group 1
+                 group 1  2002000 x tcp 5-tuple -> count, 1 x meter (1000 Mbit/s, mark only), src MAC := E8:9E:49:7F:27:CE, RSS to hairpin queues 1-8 (inserted below)
+                 group 1  miss -> drop
+                 egress group 0  all -> jump egress group 1
+                 egress group 1  all -> push VLAN 3
+Sync API:
+  Insertion:     rte_flow_create(), 1 worker lcore(s) serialized (mlx5 counters/meters are not thread-safe)
+
+Inserting 2002000 rules on 1 lcore(s), sync rte_flow_create()...
+Rules inserted: 2002000 ok, 0 failed in 156.057 s = 0.013 Mrules/s
+
+=== Traffic summary (37.3 s) ===
+  RX average                      65.50 Mpps     389.91 Gbps
+  TX average                      44.51 Mpps     269.42 Gbps
+  rx_phy_packets                     2445578222
+  rx_phy_bytes                    1819891501626
+  tx_phy_packets                     1661809895
+  tx_phy_bytes                    1257517116796
+  rx_phy_discard_packets              784300813
+  tx_phy_discard_packets                      0
+  rx_out_of_buffer                            0
+  hairpin_out_of_buffer                       0
+  rx - tx                             783768327
+
+Querying 2002000 flow counters...
+Flow counters since forwarding start (0.02 s): packets 1663174941, bytes 1245727301274, flows without hits 0, not inserted 0, query errors 0
+```
+
+Meter v navazující tabulce by podle mě nepomohl a nejspíš by výkon ještě zhoršil.
+Proč: meter má být per-flow, takže navazující tabulka by musela mít znovu 2M pravidel s 5-tuple matchem. Paket by pak prošel dvě vyhledávání místo jednoho.
+
+Pomoct by to mohlo jen tehdy, kdyby se meter sdílel (jeden pro skupinu flow), jenže to už není meter na pravidlo
+
+---
+
+TODO nedela mi tam bordel kdyz posilam vlan stejnou? Nechodi mi to kam nema?
+
 ---
 
 ## Poznámky
