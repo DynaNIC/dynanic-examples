@@ -127,7 +127,7 @@ Rule layout:
 |---|---|
 | edit_mac | 389.8 Gbps (full) |
 | insert, VLAN pushed on ingress | 267.6 Gbps (~32 % dropped on ingress) |
-| insert, VLAN pushed on **egress** (experiment, below) | 389.9 Gbps |
+| insert, VLAN pushed on **egress** (`--egress-vlan`) | 389.9 Gbps |
 
 - With the egress VLAN, the remaining ~0.44 % of packets is the extra 4 B per packet over 400G line rate.
 - In HWS, push VLAN is an inline `HEADER_INSERT` with `REPARSE_ALWAYS` (`hws/mlx5dr_action.c`).
@@ -144,12 +144,11 @@ reorders the key for IPv4-address hashing, which suits this stream badly. An unt
 
 ## Open items
 
-1. **Egress VLAN experiment (`BF_TMP_EGRESS_VLAN` in `flow_internal.h`, commit "perf(bf_tester): ...").**
-   - It is marked `TEMPORARY`. The user said it will be removed, or made permanent later.
-   - Applies only to `--sync`: two egress rules (egress group 0 jumps to 1, group 1 pushes VLAN 3) and
+1. **Egress VLAN is now the `--egress-vlan` option** (it replaced the `BF_TMP_EGRESS_VLAN` define).
+   - Off by default, so `insert --sync` pushes the VLAN on ingress again.
+   - Allowed only in modes that push a VLAN (`insert` and later) and only with `--sync`.
+   - It adds two egress rules (egress group 0 jumps to 1, group 1 pushes VLAN 3) and
      no VLAN push in the ingress rules.
-   - To remove it: delete the define and every block marked `TEMPORARY` / `BF_TMP_EGRESS_VLAN`
-     (`flow_internal.h`, `flow_rules.c`, `flow_rules.h`, `flow_sync.c`, `bf_tester.c`).
 2. **`--check-miss` does not print the miss result.**
    `bf_flow_counter_read()` → `rte_flow_query()` fails on the miss rules,
    so the summary has no miss line or verdict. Not investigated.

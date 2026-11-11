@@ -92,7 +92,7 @@ struct bf_flow_ctx {
     struct rte_flow *split_rules[BF_MAX_TABLES];    /* group 0: src IP bits -> table t (N > 1) */
     struct rte_flow *miss_rules[BF_MAX_TABLES];     /* per group: drop the rest */
     struct rte_flow *single_rule;                   /* single mode only */
-    struct rte_flow *tmp_egress_rules[2];           /* TEMPORARY: BF_TMP_EGRESS_VLAN */
+    struct rte_flow *egress_rules[2];               /* --egress-vlan: jump, push VLAN */
 
     /* Per-flow mode: one handle per flow, NULL if the insertion failed. */
     struct rte_flow **flows;

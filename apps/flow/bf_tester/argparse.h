@@ -86,6 +86,9 @@ struct application_settings
     /* Create rules with synchronous rte_flow_create() instead of the async API. */
     bool sync;
 
+    /* Push the VLAN in egress rules (hairpin Tx path) instead of in the main rules. */
+    bool egress_vlan;
+
     /* Run control. */
     uint64_t stats_interval_ms;
     bool insert_only;

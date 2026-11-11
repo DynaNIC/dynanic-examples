@@ -54,6 +54,7 @@ cmake ../apps && make bf_tester
 | `-t, --stats-interval` | Seconds between stats lines (default 1). |
 | `--no-stats` | Do not read any statistics or counters while forwarding; the app just waits for Ctrl+C (the numbers come from Spirent). Cannot be combined with `--check-miss`. |
 | `--sync` | Create rules synchronously with `rte_flow_create()` (as testpmd) instead of the async template API. Use it for measurements. Works with SW steering (default `dv_flow_en=1`) and with HW steering (`dv_flow_en=2`). |
+| `--egress-vlan` | Modes `insert` and later, `--sync` only: push the VLAN in two egress rules (egress group 0 jumps to group 1, group 1 pushes VLAN 3 on everything leaving the port) instead of in the main ingress rules. Pushing on ingress drops ~32 % at 400G with 2M rules; on egress it forwards at full rate. |
 | `--flow-queue-size`, `--push-burst` | Async only (future reference): operations in flight per lcore (1024) and operations pushed to HW at once (64). |
 
 The number of lcores (`-l`) sets the insertion parallelism: every lcore except

@@ -70,6 +70,7 @@ enum {
     OPT_INSERT_ONLY,
     OPT_NO_STATS,
     OPT_SYNC,
+    OPT_EGRESS_VLAN,
     OPT_FLOW_QUEUE_SIZE,
     OPT_PUSH_BURST,
 };
@@ -167,6 +168,7 @@ int parse_custom_args(int argc, char *argv[], struct application_settings *app_s
         {"insert-only",     no_argument,       0, OPT_INSERT_ONLY},
         {"no-stats",        no_argument,       0, OPT_NO_STATS},
         {"sync",            no_argument,       0, OPT_SYNC},
+        {"egress-vlan",     no_argument,       0, OPT_EGRESS_VLAN},
         {"stats-interval",  required_argument, 0, 't'},
         {"flow-queue-size", required_argument, 0, OPT_FLOW_QUEUE_SIZE},
         {"push-burst",      required_argument, 0, OPT_PUSH_BURST},
@@ -196,6 +198,7 @@ int parse_custom_args(int argc, char *argv[], struct application_settings *app_s
     app_settings->insert_only = false;
     app_settings->no_stats = false;
     app_settings->sync = false;
+    app_settings->egress_vlan = false;
 
     while ((opt = getopt_long(argc, argv, "M:n:H:t:h", long_options, NULL)) != -1) {
         switch (opt) {
@@ -249,6 +252,9 @@ int parse_custom_args(int argc, char *argv[], struct application_settings *app_s
         case OPT_SYNC:
             app_settings->sync = true;
             break;
+        case OPT_EGRESS_VLAN:
+            app_settings->egress_vlan = true;
+            break;
         case 't':
             if (parse_u64(optarg, &v) < 0 || v == 0)
                 goto bad_value;
@@ -285,6 +291,14 @@ int parse_custom_args(int argc, char *argv[], struct application_settings *app_s
     }
     if (app_settings->no_stats && app_settings->check_miss) {
         printf("ERROR: --check-miss needs statistics, it cannot be used with --no-stats.\n");
+        return -1;
+    }
+    if (app_settings->egress_vlan && !app_settings->mode->push_vlan) {
+        printf("ERROR: --egress-vlan needs a mode that pushes a VLAN (insert and later).\n");
+        return -1;
+    }
+    if (app_settings->egress_vlan && !app_settings->sync) {
+        printf("ERROR: --egress-vlan is implemented only with --sync.\n");
         return -1;
     }
     if (app_settings->push_burst > app_settings->flow_queue_size) {
@@ -338,6 +352,9 @@ void print_help(void)
     printf("\t                                  instead of the async template API. Use it for measurements,\n");
     printf("\t                                  async is only for future reference. Works with SW steering\n");
     printf("\t                                  (default dv_flow_en=1) and with HW steering (dv_flow_en=2).\n");
+    printf("\t     --egress-vlan              = Push the VLAN in egress rules (on everything leaving the port)\n");
+    printf("\t                                  instead of in the main ingress rules. Modes insert and later,\n");
+    printf("\t                                  needs --sync.\n");
     printf("\t     --flow-queue-size <num>    = Async: rule operations in flight per lcore (default: 1024).\n");
     printf("\t     --push-burst <num>         = Async: rule operations sent to HW at once (default: 64).\n");
     printf("\t -h, --help                     = Print this help.\n");
