@@ -92,6 +92,10 @@ struct application_settings
     /* Mode all: the second meter is per source IP instead of per flow. */
     bool group_meter;
 
+    /* Meter modes: after the meters, a table checks the color; packets that are
+     * not green are counted, all packets still go to RSS (nothing is dropped). */
+    bool color_check;
+
     /* Run control. */
     uint64_t stats_interval_ms;
     bool insert_only;

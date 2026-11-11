@@ -56,6 +56,7 @@ cmake ../apps && make bf_tester
 | `--sync` | Create rules synchronously with `rte_flow_create()` (as testpmd) instead of the async template API. Use it for measurements. Works with SW steering (default `dv_flow_en=1`) and with HW steering (`dv_flow_en=2`). |
 | `--egress-vlan` | Modes `insert` and later, `--sync` only: push the VLAN in two egress rules (egress group 0 jumps to group 1, group 1 pushes VLAN 3 on everything leaving the port) instead of in the main ingress rules. Pushing on ingress drops ~32 % at 400G with 2M rules; on egress it forwards at full rate. |
 | `--group-meter` | Mode `all` only: the second meter is shared by all flows with the same source IP (one rule and meter per source IP in group 2) instead of a second meter per flow. |
+| `--color-check` | Modes `meter` and `all`, `--sync` only: the rule with the last meter jumps to a color group instead of RSS. There green packets go to RSS, the rest (yellow, red) is counted and goes to RSS too, so nothing is dropped. It adds the lookup a real policer needs (e.g. to drop red) and prints how many packets were not green. |
 | `--flow-queue-size`, `--push-burst` | Async only (future reference): operations in flight per lcore (1024) and operations pushed to HW at once (64). |
 
 The number of lcores (`-l`) sets the insertion parallelism: every lcore except

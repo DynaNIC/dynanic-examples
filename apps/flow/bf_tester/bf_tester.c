@@ -154,7 +154,12 @@ static void print_flow_setup(const struct bf_flow_ctx *ctx, const struct applica
         rte_ether_format_addr(mac, sizeof(mac), &ctx->port_mac);
         len += snprintf(acts + len, sizeof(acts) - len, "src MAC := %s, ", mac);
     }
-    snprintf(acts + len, sizeof(acts) - len, "RSS to hairpin queues %u-%u", nb_std, hp_last);
+    char rss[48];
+    snprintf(rss, sizeof(rss), "RSS to hairpin queues %u-%u", nb_std, hp_last);
+    if (ctx->color_check)
+        snprintf(acts + len, sizeof(acts) - len, "jump group %u (color check)", bf_color_group(ctx));
+    else
+        snprintf(acts + len, sizeof(acts) - len, "%s", rss);
 
     const char *miss = s->check_miss ? "count + drop" : "drop";
     if (ctx->two_stage) {
@@ -184,6 +189,10 @@ static void print_flow_setup(const struct bf_flow_ctx *ctx, const struct applica
         else
             printf("                 %s  eth/ipv4/tcp -> %s\n", groups, acts);
         printf("                 %s  miss -> %s\n", groups, miss);
+    }
+    if (ctx->color_check) {
+        printf("                 group %u  color green -> %s\n", bf_color_group(ctx), rss);
+        printf("                 group %u  rest (yellow, red) -> count + %s\n", bf_color_group(ctx), rss);
     }
     if (s->egress_vlan) {
         printf("                 egress group 0  all -> jump egress group 1\n");
@@ -384,6 +393,8 @@ static void traffic_loop(struct bf_flow_ctx *ctx, const struct application_setti
         usleep(10000);
     if (s->mode->per_flow && s->mode->count)
         reset_flow_counters(ctx);
+    if (ctx->color_check && bf_flow_counter_reset(ctx, ctx->color_rules[1]) != 0)
+        printf("WARNING: the color check counter could not be reset.\n");
 
     if (bf_stats_init(&st, PORT_ID,
                       counter_or_na(ctx, match), miss_or_na(ctx)) != 0) {
@@ -402,6 +413,15 @@ static void traffic_loop(struct bf_flow_ctx *ctx, const struct application_setti
     }
 
     bf_stats_summary(&st, counter_or_na(ctx, match), miss_or_na(ctx));
+
+    if (ctx->color_check) {
+        uint64_t nongreen;
+
+        if (bf_flow_nongreen_read(ctx, &nongreen) == 0)
+            printf("Color check: %" PRIu64 " packets not green (forwarded anyway)\n", nongreen);
+        else
+            printf("Color check: counter query failed\n");
+    }
 }
 
 int main(int argc, char *argv[])

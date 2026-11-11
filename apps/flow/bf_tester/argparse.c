@@ -72,6 +72,7 @@ enum {
     OPT_SYNC,
     OPT_EGRESS_VLAN,
     OPT_GROUP_METER,
+    OPT_COLOR_CHECK,
     OPT_FLOW_QUEUE_SIZE,
     OPT_PUSH_BURST,
 };
@@ -171,6 +172,7 @@ int parse_custom_args(int argc, char *argv[], struct application_settings *app_s
         {"sync",            no_argument,       0, OPT_SYNC},
         {"egress-vlan",     no_argument,       0, OPT_EGRESS_VLAN},
         {"group-meter",     no_argument,       0, OPT_GROUP_METER},
+        {"color-check",     no_argument,       0, OPT_COLOR_CHECK},
         {"stats-interval",  required_argument, 0, 't'},
         {"flow-queue-size", required_argument, 0, OPT_FLOW_QUEUE_SIZE},
         {"push-burst",      required_argument, 0, OPT_PUSH_BURST},
@@ -202,6 +204,7 @@ int parse_custom_args(int argc, char *argv[], struct application_settings *app_s
     app_settings->sync = false;
     app_settings->egress_vlan = false;
     app_settings->group_meter = false;
+    app_settings->color_check = false;
 
     while ((opt = getopt_long(argc, argv, "M:n:H:t:h", long_options, NULL)) != -1) {
         switch (opt) {
@@ -261,6 +264,9 @@ int parse_custom_args(int argc, char *argv[], struct application_settings *app_s
         case OPT_GROUP_METER:
             app_settings->group_meter = true;
             break;
+        case OPT_COLOR_CHECK:
+            app_settings->color_check = true;
+            break;
         case 't':
             if (parse_u64(optarg, &v) < 0 || v == 0)
                 goto bad_value;
@@ -309,6 +315,14 @@ int parse_custom_args(int argc, char *argv[], struct application_settings *app_s
     }
     if (app_settings->mode->nb_meters > 1 && !app_settings->sync) {
         printf("ERROR: mode '%s' is implemented only with --sync.\n", app_settings->mode->name);
+        return -1;
+    }
+    if (app_settings->color_check && app_settings->mode->nb_meters == 0) {
+        printf("ERROR: --color-check needs a mode with meters (meter, all).\n");
+        return -1;
+    }
+    if (app_settings->color_check && !app_settings->sync) {
+        printf("ERROR: --color-check is implemented only with --sync.\n");
         return -1;
     }
     if (app_settings->group_meter && app_settings->mode->nb_meters < 2) {
@@ -372,6 +386,9 @@ void print_help(void)
     printf("\t     --group-meter              = Mode all: the second meter is shared by all flows with the same\n");
     printf("\t                                  source IP (one rule and meter per source IP in the following\n");
     printf("\t                                  table) instead of a second meter per flow.\n");
+    printf("\t     --color-check              = Meter modes: after the meters, a table matches the color.\n");
+    printf("\t                                  Green -> RSS; yellow/red -> counted and RSS too (nothing is\n");
+    printf("\t                                  dropped). The count of non-green packets is printed.\n");
     printf("\t     --flow-queue-size <num>    = Async: rule operations in flight per lcore (default: 1024).\n");
     printf("\t     --push-burst <num>         = Async: rule operations sent to HW at once (default: 64).\n");
     printf("\t -h, --help                     = Print this help.\n");

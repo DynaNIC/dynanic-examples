@@ -102,6 +102,40 @@ static int group_rules_insert(struct bf_flow_ctx *ctx)
     return 0;
 }
 
+/*
+ * --color-check: the color group. Green packets go to RSS; the rest (yellow,
+ * red) is counted and goes to RSS as well, so nothing is dropped. The counter
+ * is only on the rare path, green packets pay for the lookup only.
+ */
+static int color_rules_insert(struct bf_flow_ctx *ctx)
+{
+    static const struct rte_flow_item_meter_color green = { .color = RTE_COLOR_GREEN };
+    /* The TCP item keeps mlx5 from expanding the ipv4-tcp RSS (see group_rules_insert()). */
+    const struct rte_flow_item green_items[] = {
+        { .type = RTE_FLOW_ITEM_TYPE_ETH },
+        { .type = RTE_FLOW_ITEM_TYPE_IPV4 },
+        { .type = RTE_FLOW_ITEM_TYPE_TCP },
+        { .type = RTE_FLOW_ITEM_TYPE_METER_COLOR, .spec = &green,
+          .mask = &rte_flow_item_meter_color_mask },
+        { .type = RTE_FLOW_ITEM_TYPE_END },
+    };
+    const struct rte_flow_action green_acts[] = {
+        { .type = RTE_FLOW_ACTION_TYPE_RSS, .conf = &ctx->rss },
+        { .type = RTE_FLOW_ACTION_TYPE_END },
+    };
+    const struct rte_flow_action other_acts[] = {
+        { .type = RTE_FLOW_ACTION_TYPE_COUNT },
+        { .type = RTE_FLOW_ACTION_TYPE_RSS, .conf = &ctx->rss },
+        { .type = RTE_FLOW_ACTION_TYPE_END },
+    };
+    const uint32_t g = bf_color_group(ctx);
+
+    if (rule_create(ctx, "color rule green", g, 0, green_items, green_acts, &ctx->color_rules[0]) < 0)
+        return -1;
+    return rule_create(ctx, "color rule other", g, 1, bf_tcp_any_items, other_acts,
+                       &ctx->color_rules[1]);
+}
+
 /* Group 0 rules, miss rules (lower priority) and, in single mode, the eth/ipv4/tcp rule. */
 int bf_sync_fixed_rules_insert(struct bf_flow_ctx *ctx)
 {
@@ -134,6 +168,9 @@ int bf_sync_fixed_rules_insert(struct bf_flow_ctx *ctx)
                         bf_miss_actions(ctx), &ctx->stage2_miss_rules[t]) < 0)
             return -1;
     }
+    /* The color group first: the rules with meters jump to it. */
+    if (ctx->color_check && color_rules_insert(ctx) < 0)
+        return -1;
     if (ctx->two_stage && ctx->set->group_meter && group_rules_insert(ctx) < 0)
         return -1;
 
@@ -224,6 +261,8 @@ void bf_sync_teardown(struct bf_flow_ctx *ctx)
     rule_destroy(ctx, &ctx->root_rule);
     rule_destroy(ctx, &ctx->egress_rules[1]);
     rule_destroy(ctx, &ctx->egress_rules[0]);
+    rule_destroy(ctx, &ctx->color_rules[0]);
+    rule_destroy(ctx, &ctx->color_rules[1]);
     for (uint16_t t = 0; t < BF_MAX_TABLES; t++) {
         rule_destroy(ctx, &ctx->split_rules[t]);
         rule_destroy(ctx, &ctx->miss_rules[t]);

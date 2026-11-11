@@ -260,6 +260,10 @@ int bf_flow_engine_configure(struct bf_flow_ctx *ctx, uint16_t port_id,
     tables_setup(ctx);
     if (set->mode->nb_meters > 1)
         two_stage_setup(ctx);
+    if (set->color_check) {
+        ctx->color_check = true;
+        ctx->color_jump.group = bf_color_group(ctx);
+    }
     if (set->mode->set_mac || set->mode->push_vlan)
         edit_setup(ctx);
 
@@ -300,7 +304,8 @@ int bf_flow_engine_configure(struct bf_flow_ctx *ctx, uint16_t port_id,
 
     /* Counters are reserved up front: miss rules (--check-miss), one per main rule (count modes). */
     uint64_t nb_counters = (set->check_miss ? ctx->nb_tables + ctx->nb_stage2_tables : 0) +
-                           (set->mode->count ? (set->mode->per_flow ? ctx->nb_flows : 1) : 0);
+                           (set->mode->count ? (set->mode->per_flow ? ctx->nb_flows : 1) : 0) +
+                           (ctx->color_check ? 1 : 0);
     if (nb_counters > UINT32_MAX ||
         (pinfo.max_nb_counters != 0 && nb_counters > pinfo.max_nb_counters)) {
         rte_log(RTE_LOG_ERR, RTE_LOGTYPE_USER1,
@@ -450,7 +455,11 @@ static unsigned main_actions_build(const struct bf_flow_ctx *ctx, struct rte_flo
     if (mode->set_mac)
         a[n++] = (struct rte_flow_action){ .type = RTE_FLOW_ACTION_TYPE_MODIFY_FIELD,
                                            .conf = mask ? &ctx->set_src_mac_mask : &ctx->set_src_mac };
-    a[n++] = (struct rte_flow_action){ .type = RTE_FLOW_ACTION_TYPE_RSS, .conf = &ctx->rss };
+    if (ctx->color_check)   /* the color group does the RSS */
+        a[n++] = (struct rte_flow_action){ .type = RTE_FLOW_ACTION_TYPE_JUMP,
+                                           .conf = &ctx->color_jump };
+    else
+        a[n++] = (struct rte_flow_action){ .type = RTE_FLOW_ACTION_TYPE_RSS, .conf = &ctx->rss };
     a[n++] = (struct rte_flow_action){ .type = RTE_FLOW_ACTION_TYPE_END };
     return n;
 }

@@ -106,6 +106,16 @@ struct bf_flow_ctx {
     struct rte_flow_action_jump stage2_jump[BF_MAX_TABLES]; /* to the stage 2 group of table t */
 
     /*
+     * --color-check: the rule with the last meter jumps (instead of RSS) to the
+     * color group bf_color_group(): "color == green -> RSS" and, at a lower
+     * priority, "any -> count + RSS". Nothing is dropped; the counter shows how
+     * many packets were not green.
+     */
+    bool color_check;
+    struct rte_flow_action_jump color_jump;
+    struct rte_flow *color_rules[2];    /* green -> RSS, rest -> count + RSS */
+
+    /*
      * Main tables (--tables N): table t lives in group BF_MAIN_GROUP + t and
      * gets the flows whose source IP has t in its lowest log2(N) bits.
      */
@@ -150,6 +160,12 @@ struct bf_flow_ctx {
 static inline uint32_t bf_stage2_group(const struct bf_flow_ctx *ctx, uint16_t table)
 {
     return BF_MAIN_GROUP + ctx->nb_tables + table;
+}
+
+/* --color-check: group of the color rules, after the main and stage 2 groups. */
+static inline uint32_t bf_color_group(const struct bf_flow_ctx *ctx)
+{
+    return BF_MAIN_GROUP + ctx->nb_tables + ctx->nb_stage2_tables;
 }
 
 /* Result of a bulk insert run. */
@@ -208,6 +224,14 @@ int bf_flow_miss_read(struct bf_flow_ctx *ctx, uint64_t *packets);
  */
 int bf_flow_counter_read(struct bf_flow_ctx *ctx, struct rte_flow *flow,
                          uint64_t *hits, uint64_t *bytes);
+
+/**
+ * @brief --color-check: packets that were not green after the meters.
+ */
+static inline int bf_flow_nongreen_read(struct bf_flow_ctx *ctx, uint64_t *packets)
+{
+    return bf_flow_counter_read(ctx, ctx->color_rules[1], packets, NULL);
+}
 
 /**
  * @brief Make the counter of a rule count from now on (later reads return the delta).
