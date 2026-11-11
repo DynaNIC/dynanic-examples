@@ -14,12 +14,44 @@ Measure a BlueField-3 forwarding Spirent traffic back through hairpin queues wit
 | 1 | `per-flow`: one exact TCP 5-tuple rule per flow, 2M/4M/8M/16M flows | done |
 | 2a | `edit_mac`: + source MAC := port MAC | done |
 | 2b | `insert`: + push VLAN 3 | done (slow on ingress, see below) |
-| 3a | `count`: + counter per rule | implemented, not measured |
-| 3b | `meter`: + meter per rule | implemented, first run only |
-| 4 | `all`: + counter and two meters per flow | implemented, first runs only |
+| 3a | `count`: + counter per rule | done, 2M measured (ingress and egress VLAN) |
+| 3b | `meter`: + meter per rule | done, 2M measured (ingress and egress VLAN) |
+| 4 | `all`: + counter and two meters per flow | done, 2M measured; meter 2 marks everything red, see below |
 
 Each mode includes everything from the previous one. Output of each measurement:
 Mpps and Gbps (the reference numbers come from the Spirent counters).
+
+## Where we stopped (2026-11-11)
+
+Everything is committed. The last steps were the meter modes and `--color-check`.
+
+**Pending decision (asked the user, no answer yet):** in mode `all`, meter 2 is color aware and gets
+the input color RED for every packet (cause verified in the code, see "Meter 2 in mode all" under
+Findings). Options:
+1. Make meter 2 color blind (`ctx->meter_mark2.color_mode = 0` in `meter_setup()`). Simple; the two
+   meters are then independent, which is enough to measure the cost. Recommended.
+2. Real hierarchy in HWS: stage 2 rules per color of meter 1 (match `METER_COLOR`), each with an
+   indirect meter and the matching `init_color` (`INDIRECT_LIST` + `rte_flow_indirect_update_flow_meter_mark`).
+   ~3x more stage 2 rules and much more work.
+
+After the fix, re-run `all --color-check` and `all --group-meter --color-check`: non-green should be 0.
+
+**Other next steps the user may pick:**
+- The mlx5 counter readout bug (Findings): per-flow counter values are wrong beyond 65,536 counters.
+  The app cannot fix it; options are to read only aggregate counters, or to check whether a newer DPDK
+  fixes `mlx5_aso_cnt_sq_enqueue_burst()`. "Flows without hits" in the summary is meaningless until then.
+- Meter ipool per-lcore cache (Findings, mode 3b): with more than one inserting lcore the last meters
+  cannot be allocated. Measure meter modes with one inserting lcore (`-l 96-97`), or reserve
+  `nb_flows + lcores * 8192` meters.
+- Hypothesis to test: what costs is the number of per-flow objects a packet touches (action STEs,
+  counters, meters). Moving VLAN/MAC/RSS to a small shared following table might speed up all modes.
+- 4M/8M/16M runs of the new modes were not done (16M with a counter does not fit: 15.7M counters).
+
+**How the last measurements were run:** 2M flows, `--sync`, one inserting lcore (`-l 96-97`), because the
+insertion order changes the result and meters need it. Long series were started on the host with
+`nohup` and a log file (`~/bf_series.sh`, `~/bf_series.log`), so a dropped ssh does not lose them.
+The host went down once during a `--color-check` run (cause unknown, `last -x` says "crash"); after the
+reboot a 1000-rule test and the full series ran fine.
 
 ## Working rules agreed with the user
 
@@ -50,6 +82,8 @@ Mpps and Gbps (the reference numbers come from the Spirent counters).
       -n 6 -l 96-112 --socket-mem=4096 -- -M per-flow --src-ip 192.85.1.2,2000 --src-port 1024,1001 --sync
   ```
   Argument parsing can be tested without the card: `--no-pci --no-huge --in-memory -l 0`.
+  Since the count/meter modes, measurements use one inserting lcore (`-l 96-97`) and `--check-miss`:
+  the insertion order changes the result, and counters/meters are inserted serially anyway.
 - **Traffic:** Spirent TestCenter, a single port `//10/1`, connected through a switch in VLAN 3
   (access ports, managed with `/home/patova/work/switchctl`). The stream blocks are 2M/4M/8M/16M:
   - fields: src IP `192.85.1.2`, count 2000/4000/8000/16000; dst IP `192.0.0.1`;
@@ -86,7 +120,13 @@ All the code is in `apps/flow/bf_tester/`. See `README.md` for the options.
 Rule layout:
 - **group 0:** a jump to group 1, or with `--tables N` a jump to group `1+(src IP & (N-1))`.
 - **group 1..N:** the matching rules, plus a lower-priority miss rule that drops (with a counter when `--check-miss` is given).
+- **mode `all`:** group 1..N per flow (count, meter 1, jump) → stage 2 groups after them
+  (`bf_stage2_group()`; one per table, or one with `--group-meter`) with meter 2, VLAN, MAC, RSS.
+- **`--color-check`:** the rule with the last meter jumps to `bf_color_group()` (after all the others):
+  green → RSS, rest → count + RSS.
 - Actions must be listed in HW order: counter, meters, push VLAN, modify, fate (RSS).
+- Patterns of rules with RSS need an L4 item (TCP), otherwise mlx5 expands the ipv4-tcp RSS through
+  a PTYPE group, which fails ("cannot get RSS PTYPE group").
 
 ## Findings
 
@@ -184,6 +224,49 @@ Rule layout:
   So moving VLAN/MAC/RSS to a small shared table might speed up the other modes as well.
 - Flows without hits: 60, in pairs at 64K boundaries (#65534 and #65535, …).
 
+**Color check and egress VLAN (2M, sync, 1 inserting lcore, `--check-miss`, run back to back):**
+
+| Case | TX | non-green |
+|---|---|---|
+| meter | 200.0 Gbps (earlier run) | – |
+| meter `--color-check` | 197.7 Gbps | 0 |
+| all B `--color-check` | 125.3 Gbps (127.3 without) | 1.76G ≈ all TX |
+| all C `--group-meter --color-check` | 215.7 Gbps (221.6 without) | 3.17G ≈ all TX |
+| count `--egress-vlan` | 375.2 Gbps (285.5 ingress) | – |
+| meter `--egress-vlan` | 269.4 Gbps (200.0 ingress) | – |
+
+- The color check costs ~1–3 %.
+- In mode `all` almost every packet leaves meter 2 (color aware) not green, although the rates are far
+  below 1 Gbit/s and `meter` (color blind) gives 0. See "Meter 2 in mode all" below.
+- Egress VLAN fits the action STE count: count egress = 1 action STE (375), insert/count ingress and
+  meter egress = 2 (293/285/269), meter ingress = 3 (200).
+
+**Meter 2 in mode all gets the input color RED (cause verified in the code, DPDK 25.11):**
+- In HWS a color-aware ASO meter does not read the packet's color. The input color is a 2-bit
+  `init_color` field of the meter action in each rule (`mlx5dr_action.c:3843-3847`).
+- A direct `METER_MARK` (what the app uses) never sets it: `flow_hw_meter_mark_compile()` fills only
+  `action` and `aso_meter.offset` (`mlx5_flow_hw.c:1961-1963`). Only the indirect-list meter sets it
+  from `rte_flow_indirect_update_flow_meter_mark.init_color` (`mlx5_flow_hw.c:2099`).
+  `struct rte_flow_action_meter_mark` has no init_color field in 25.11.
+- Unset means 0, and 0 is `MLX5DR_ACTION_ASO_METER_COLOR_RED` (`mlx5dr.h:79-82`). A color-aware
+  meter with input red marks red (RFC 2697), so every packet ends red.
+- `flow_hw_meter_mark_alloc()` sets `aso_mtr->init_color = RTE_COLORS` for color-aware meters, but
+  nothing reads that field.
+- Not verified: that the rule action array is zeroed on the sync path (very likely, the result is
+  too clean otherwise). Forwarding is not affected because nothing is dropped.
+
+**mlx5 counter readout bug (strong evidence, DPDK 25.11):** per-flow counter values beyond the first
+65,536 counters mirror counters 0–65,535. In `mlx5_aso_cnt_sq_enqueue_burst()` (`mlx5_flow_aso.c`)
+every burst of 65,536 counters starts the HW counter id at `dcs_id_base / 4` without the burst offset,
+while the destination (`ccntid`) does use the offset.
+- With `--color-check` in mode `all` the per-flow sum is exactly 31.0x the non-green counter
+  (54.67G / 1.76G and 98.30G / 3.17G): the color counter (a low id) is copied into every 64K block.
+- "Flows without hits" (30 per miss counter: 30 with one, 60 with two) are the flows that mirror a
+  miss counter (0 hits).
+- The per-flow sums matched TX only because the traffic is uniform over the flows.
+- The HW counting itself is fine; only the per-flow values read by the app are wrong. The miss and
+  color counters (low ids) read correctly.
+
 **Insertion order changes forwarding (2M, sync, ingress VLAN, measured back to back):**
 
 | Mode | Inserting lcores | TX |
@@ -220,7 +303,8 @@ reorders the key for IPv4-address hashing, which suits this stream badly. An unt
    passed a single COUNT action without END. Fixed with the `count` mode; the miss line and the
    verdict now print (verified on the card), but see the first-interval miss issue under Findings.
 3. **Mode `all`** is implemented (variants B and C above), `--sync` only. Red packets are
-   only marked; dropping them (a table matching the color) is not implemented.
+   never dropped; `--color-check` adds the color lookup and counts non-green packets.
+   Meter 2 marks everything red (see "Where we stopped").
 4. **16M: the remaining ~5 % loss** with 8 tables (cache hypothesis above).
 5. **NFB support (analysis only, nothing implemented).**
    - The DynaNIC nfb PMD in `~/work/sn4dc-dpdk` has hairpin, sync rte_flow, and async only for FST groups.
