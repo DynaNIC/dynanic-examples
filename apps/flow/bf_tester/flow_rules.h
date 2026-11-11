@@ -92,6 +92,20 @@ struct bf_flow_ctx {
     uint32_t max_meters;        /* PMD maximum, read after rte_flow_configure() */
 
     /*
+     * Mode all (two meters per flow). A HWS rule has a single meter slot
+     * (action_order_arr in mlx5dr_action.c), so each flow goes through two rules:
+     *   stage 1, group BF_MAIN_GROUP + t:     counter, meter 1, jump to stage 2
+     *   stage 2, group bf_stage2_group(t):    meter 2 (color aware), VLAN, MAC, RSS
+     * Stage 2 has one 5-tuple rule per flow, or with --group-meter one rule
+     * per source IP in a single group (the meter is shared by those flows).
+     */
+    bool two_stage;
+    uint16_t nb_stage2_tables;  /* nb_tables, or 1 with --group-meter */
+    uint32_t nb_src_groups;     /* --group-meter: stage 2 rules (source IPs) */
+    struct rte_flow_action_meter_mark meter_mark2;          /* meter 2: color aware */
+    struct rte_flow_action_jump stage2_jump[BF_MAX_TABLES]; /* to the stage 2 group of table t */
+
+    /*
      * Main tables (--tables N): table t lives in group BF_MAIN_GROUP + t and
      * gets the flows whose source IP has t in its lowest log2(N) bits.
      */
@@ -121,11 +135,22 @@ struct bf_flow_ctx {
     struct rte_flow *miss_rules[BF_MAX_TABLES];     /* per group: drop the rest */
     struct rte_flow *single_rule;                   /* single mode only */
     struct rte_flow *egress_rules[2];               /* --egress-vlan: jump, push VLAN */
+    struct rte_flow *stage2_miss_rules[BF_MAX_TABLES];  /* mode all: per stage 2 group */
+    struct rte_flow **group_rules;                  /* --group-meter: one per source IP */
 
-    /* Per-flow mode: one handle per flow, NULL if the insertion failed. */
+    /* Per-flow mode: one handle per flow, NULL if the insertion failed.
+     * Mode all: flows are the stage 1 rules (with the counter), flows2 the
+     * stage 2 rules (not with --group-meter). */
     struct rte_flow **flows;
+    struct rte_flow **flows2;
     uint64_t nb_flows;
 };
+
+/* Group of the stage 2 rules of main table t (mode all), after the main groups. */
+static inline uint32_t bf_stage2_group(const struct bf_flow_ctx *ctx, uint16_t table)
+{
+    return BF_MAIN_GROUP + ctx->nb_tables + table;
+}
 
 /* Result of a bulk insert run. */
 struct bf_bulk_result {

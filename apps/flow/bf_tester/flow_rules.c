@@ -149,6 +149,19 @@ static void tables_setup(struct bf_flow_ctx *ctx)
         ctx->table_flows[bf_table_of(ctx, i)]++;
 }
 
+/* Mode all: stage 2 groups and their jump targets (see two_stage in bf_flow_ctx). */
+static void two_stage_setup(struct bf_flow_ctx *ctx)
+{
+    const struct application_settings *set = ctx->set;
+
+    ctx->two_stage = true;
+    ctx->nb_stage2_tables = set->group_meter ? 1 : ctx->nb_tables;
+    for (uint16_t t = 0; t < ctx->nb_stage2_tables; t++)
+        ctx->stage2_jump[t].group = bf_stage2_group(ctx, t);
+    /* Flows 0..count-1 have all the distinct source IPs. */
+    if (set->group_meter)
+        ctx->nb_src_groups = (uint32_t)RTE_MIN((uint64_t)set->src_ip.count, ctx->nb_flows);
+}
 
 /*
  * Meter modes: add the shared meter profile (after rte_flow_configure(), which
@@ -194,6 +207,9 @@ static int meter_setup(struct bf_flow_ctx *ctx)
         .color_mode = 0,
         .state = 1,
     };
+    /* Mode all: meter 2 is color aware, it starts from the color of meter 1. */
+    ctx->meter_mark2 = ctx->meter_mark;
+    ctx->meter_mark2.color_mode = 1;
     return 0;
 }
 
@@ -242,6 +258,8 @@ int bf_flow_engine_configure(struct bf_flow_ctx *ctx, uint16_t port_id,
     ctx->sync_serialize = set->sync && (set->mode->count || set->mode->nb_meters > 0);
     rte_spinlock_init(&ctx->sync_lock);
     tables_setup(ctx);
+    if (set->mode->nb_meters > 1)
+        two_stage_setup(ctx);
     if (set->mode->set_mac || set->mode->push_vlan)
         edit_setup(ctx);
 
@@ -281,7 +299,7 @@ int bf_flow_engine_configure(struct bf_flow_ctx *ctx, uint16_t port_id,
     }
 
     /* Counters are reserved up front: miss rules (--check-miss), one per main rule (count modes). */
-    uint64_t nb_counters = (set->check_miss ? ctx->nb_tables : 0) +
+    uint64_t nb_counters = (set->check_miss ? ctx->nb_tables + ctx->nb_stage2_tables : 0) +
                            (set->mode->count ? (set->mode->per_flow ? ctx->nb_flows : 1) : 0);
     if (nb_counters > UINT32_MAX ||
         (pinfo.max_nb_counters != 0 && nb_counters > pinfo.max_nb_counters)) {
@@ -294,6 +312,8 @@ int bf_flow_engine_configure(struct bf_flow_ctx *ctx, uint16_t port_id,
     /* Meters: nb_meters per main rule. The maximum is only reported after
      * rte_flow_configure(), which fails if there are too many. */
     uint64_t nb_meters = (uint64_t)set->mode->nb_meters * (set->mode->per_flow ? ctx->nb_flows : 1);
+    if (ctx->two_stage && set->group_meter)
+        nb_meters = ctx->nb_flows + ctx->nb_src_groups;     /* meter 2 per source IP */
     if (nb_meters > UINT32_MAX) {
         rte_log(RTE_LOG_ERR, RTE_LOGTYPE_USER1,
                 "ERROR: %" PRIu64 " meters needed, too many.\n", nb_meters);
@@ -407,12 +427,18 @@ static unsigned main_actions_build(const struct bf_flow_ctx *ctx, struct rte_flo
     const struct bf_mode_info *mode = ctx->set->mode;
     unsigned n = 0;
 
-    if (mode->count)
-        a[n++] = (struct rte_flow_action){ .type = RTE_FLOW_ACTION_TYPE_COUNT };
-    /* The PMD creates a new meter object for every rule with this action. */
-    for (uint8_t m = 0; m < mode->nb_meters; m++)
+    if (ctx->two_stage) {
+        /* Stage 2 rule: the counter and meter 1 are in stage 1 (bf_stage1_actions()). */
         a[n++] = (struct rte_flow_action){ .type = RTE_FLOW_ACTION_TYPE_METER_MARK,
-                                           .conf = &ctx->meter_mark };
+                                           .conf = &ctx->meter_mark2 };
+    } else {
+        if (mode->count)
+            a[n++] = (struct rte_flow_action){ .type = RTE_FLOW_ACTION_TYPE_COUNT };
+        /* The PMD creates a new meter object for every rule with this action. */
+        for (uint8_t m = 0; m < mode->nb_meters; m++)
+            a[n++] = (struct rte_flow_action){ .type = RTE_FLOW_ACTION_TYPE_METER_MARK,
+                                               .conf = &ctx->meter_mark };
+    }
     /* With --egress-vlan the egress rules push the VLAN instead. */
     if (mode->push_vlan && !ctx->set->egress_vlan) {
         /* SET_VLAN_VID must follow OF_PUSH_VLAN directly. */
@@ -437,6 +463,20 @@ unsigned bf_main_actions(const struct bf_flow_ctx *ctx, struct rte_flow_action *
 unsigned bf_main_masks(const struct bf_flow_ctx *ctx, struct rte_flow_action *a)
 {
     return main_actions_build(ctx, a, true);
+}
+
+unsigned bf_stage1_actions(const struct bf_flow_ctx *ctx, uint16_t stage2_table,
+                           struct rte_flow_action *a)
+{
+    unsigned n = 0;
+
+    a[n++] = (struct rte_flow_action){ .type = RTE_FLOW_ACTION_TYPE_COUNT };
+    a[n++] = (struct rte_flow_action){ .type = RTE_FLOW_ACTION_TYPE_METER_MARK,
+                                       .conf = &ctx->meter_mark };
+    a[n++] = (struct rte_flow_action){ .type = RTE_FLOW_ACTION_TYPE_JUMP,
+                                       .conf = &ctx->stage2_jump[stage2_table] };
+    a[n++] = (struct rte_flow_action){ .type = RTE_FLOW_ACTION_TYPE_END };
+    return n;
 }
 
 /* ------------------------------------------------------------------------ */
@@ -526,6 +566,14 @@ int bf_flow_bulk_insert(struct bf_flow_ctx *ctx, volatile int *stop, struct bf_b
         rte_log(RTE_LOG_ERR, RTE_LOGTYPE_USER1, "ERROR: cannot allocate %" PRIu64 " flow handles.\n",
                 ctx->nb_flows);
         return -1;
+    }
+    if (ctx->two_stage && !ctx->set->group_meter) {
+        ctx->flows2 = calloc(ctx->nb_flows, sizeof(*ctx->flows2));
+        if (ctx->flows2 == NULL) {
+            rte_log(RTE_LOG_ERR, RTE_LOGTYPE_USER1,
+                    "ERROR: cannot allocate %" PRIu64 " stage 2 flow handles.\n", ctx->nb_flows);
+            return -1;
+        }
     }
 
     /* One worker per lcore (and per flow queue); without workers the main lcore inserts. */
@@ -631,6 +679,13 @@ int bf_flow_miss_read(struct bf_flow_ctx *ctx, uint64_t *packets)
             return -1;
         *packets += hits;
     }
+    for (uint16_t t = 0; t < ctx->nb_stage2_tables; t++) {
+        uint64_t hits;
+
+        if (bf_flow_counter_read(ctx, ctx->stage2_miss_rules[t], &hits, NULL) != 0)
+            return -1;
+        *packets += hits;
+    }
     return 0;
 }
 
@@ -643,6 +698,10 @@ void bf_flow_teardown(struct bf_flow_ctx *ctx)
 
     free(ctx->flows);
     ctx->flows = NULL;
+    free(ctx->flows2);
+    ctx->flows2 = NULL;
+    free(ctx->group_rules);
+    ctx->group_rules = NULL;
     free(ctx->hp_queues);
     ctx->hp_queues = NULL;
 }

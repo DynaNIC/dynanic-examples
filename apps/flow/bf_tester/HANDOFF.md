@@ -16,7 +16,7 @@ Measure a BlueField-3 forwarding Spirent traffic back through hairpin queues wit
 | 2b | `insert`: + push VLAN 3 | done (slow on ingress, see below) |
 | 3a | `count`: + counter per rule | implemented, not measured |
 | 3b | `meter`: + meter per rule | implemented, first run only |
-| 4 | `all`: + counter and two meters per rule | not implemented |
+| 4 | `all`: + counter and two meters per flow | implemented, first runs only |
 
 Each mode includes everything from the previous one. Output of each measurement:
 Mpps and Gbps (the reference numbers come from the Spirent counters).
@@ -163,6 +163,26 @@ Rule layout:
   without a lock, so meter modes are serialized as well.
 - TX 200.0 Gbps (count with 1 lcore: 285.5), rx_phy_discard 49.8 %, miss 0,
   per-flow sum 2.587G against tx_phy 2.595G.
+- The user also ran meter with 16 lcores: 1 rule failed (`Action construction failed`), 26,821 not
+  inserted. Cause in the code: the meter ipool (`mlx5_flow_meter_init()`) has `.max_idx = nb_meters`
+  and `.per_core_cache = 1 << 13`, so near the end the other lcores' caches hold the free indexes.
+  Not fixed; use 1 inserting lcore (or reserve `nb_flows + lcores * 8192` meters).
+
+**Mode 4 `all`, 2M, sync, 1 inserting lcore, ingress VLAN (first runs):**
+- A HWS rule has one ASO_METER slot (`action_order_arr` in `mlx5dr_action.c`), so the two meters
+  are in two rules: group 1 per flow (count, meter 1, jump) → group 2 (meter 2 color aware,
+  VLAN, MAC, RSS). Existing modes are not changed (`two_stage` only for `nb_meters > 1`).
+- Variant B (default): group 2 has a 5-tuple rule per flow. 2×2M rules, 4M meters, 306 s.
+  TX 127.3 Gbps, rx_phy_discard 68 %.
+- Variant C (`--group-meter`): group 2 has one rule per source IP (2000), meter 2 shared by the
+  ~1001 flows of one IP. 150 s. TX 221.6 Gbps, rx_phy_discard 44 %, i.e. faster than `meter` (200.0).
+  - The group 2 rules need a TCP item: without an L4 item mlx5 expands the ipv4-tcp RSS through a
+    PTYPE group (`mlx5_nta_rss.c`), which failed with "cannot get RSS PTYPE group".
+- Hypothesis (not verified): what costs is the number of per-flow objects a packet touches (2M
+  each, they do not fit the NIC cache). meter: match + 3 action STEs + counter + meter, all per flow.
+  C: match + 1 action STE + counter + meter per flow, then a small group 2 (2000 rules and meters).
+  So moving VLAN/MAC/RSS to a small shared table might speed up the other modes as well.
+- Flows without hits: 60, in pairs at 64K boundaries (#65534 and #65535, …).
 
 **Insertion order changes forwarding (2M, sync, ingress VLAN, measured back to back):**
 
@@ -199,9 +219,8 @@ reorders the key for IPv4-address hashing, which suits this stream badly. An unt
    Probable cause, found in the code: mlx5 `flow_hw_query()` walks the actions up to END, and the app
    passed a single COUNT action without END. Fixed with the `count` mode; the miss line and the
    verdict now print (verified on the card), but see the first-interval miss issue under Findings.
-3. **Mode `all`** (counter and two meters per rule). `main_actions_build()` already adds
-   `nb_meters` METER_MARK actions. Not checked: the HWS action order (`action_order_arr` in
-   `mlx5dr_action.c`) has a single ASO_METER slot, so two meters in one rule may be rejected.
+3. **Mode `all`** is implemented (variants B and C above), `--sync` only. Red packets are
+   only marked; dropping them (a table matching the color) is not implemented.
 4. **16M: the remaining ~5 % loss** with 8 tables (cache hypothesis above).
 5. **NFB support (analysis only, nothing implemented).**
    - The DynaNIC nfb PMD in `~/work/sn4dc-dpdk` has hairpin, sync rte_flow, and async only for FST groups.

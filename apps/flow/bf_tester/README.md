@@ -22,7 +22,7 @@ everything from the previous one.
 | `insert`   | 2b   | + push VLAN 3 (fixed value)                                | implemented     |
 | `count`    | 3a   | + counter per rule                                         | implemented     |
 | `meter`    | 3b   | + meter per rule (1 Gbit/s, mark only)                     | implemented     |
-| `all`      | 4    | + counter and two meters per rule                          | not implemented |
+| `all`      | 4    | + counter and two meters per flow (see below)              | implemented     |
 
 In every mode group 0 holds one rule jumping to group 1, and group 1 holds a
 lower-priority miss rule that drops packets matching no rule.
@@ -55,6 +55,7 @@ cmake ../apps && make bf_tester
 | `--no-stats` | Do not read any statistics or counters while forwarding; the app just waits for Ctrl+C (the numbers come from Spirent). Cannot be combined with `--check-miss`. |
 | `--sync` | Create rules synchronously with `rte_flow_create()` (as testpmd) instead of the async template API. Use it for measurements. Works with SW steering (default `dv_flow_en=1`) and with HW steering (`dv_flow_en=2`). |
 | `--egress-vlan` | Modes `insert` and later, `--sync` only: push the VLAN in two egress rules (egress group 0 jumps to group 1, group 1 pushes VLAN 3 on everything leaving the port) instead of in the main ingress rules. Pushing on ingress drops ~32 % at 400G with 2M rules; on egress it forwards at full rate. |
+| `--group-meter` | Mode `all` only: the second meter is shared by all flows with the same source IP (one rule and meter per source IP in group 2) instead of a second meter per flow. |
 | `--flow-queue-size`, `--push-burst` | Async only (future reference): operations in flight per lcore (1024) and operations pushed to HW at once (64). |
 
 The number of lcores (`-l`) sets the insertion parallelism: every lcore except
@@ -129,6 +130,14 @@ dropped, and the measurement shows the cost of metering alone. The PMD creates
 a meter object for every rule and waits for the HW to set it up, so 2M rules
 take ~160 s. Meters need HW steering (`dv_flow_en=2`); the card has at most
 33,554,432.
+
+Mode `all` (`--sync` only): a HWS rule has a single meter slot, so every flow
+goes through two rules. The per-flow rule in group 1 has the counter and meter
+1 and jumps to group 2, where meter 2 (color aware, the same profile) and the
+VLAN, MAC and RSS actions are. By default group 2 has one 5-tuple rule per flow
+(two meters per flow, 2×N rules). With `--group-meter` group 2 has one rule per
+source IP instead, so meter 2 is shared by all flows from that IP (like a meter
+per customer). Nothing is dropped in either case.
 
 Counters are wired: in `count` and later modes a counter is attached to every
 rule and at exit the app reports how many flows received no packets. The card

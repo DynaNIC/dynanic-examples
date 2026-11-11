@@ -53,8 +53,8 @@ static const struct bf_mode_info bf_mode_table[BF_MODE_MAX] = {
         .per_flow = true, .set_mac = true, .push_vlan = true, .count = true, .nb_meters = 1,
     },
     [BF_MODE_ALL] = {
-        .id = BF_MODE_ALL, .name = "all", .implemented = false,
-        .desc = "insert + counter and two meters per rule",
+        .id = BF_MODE_ALL, .name = "all", .implemented = true,
+        .desc = "insert + counter and two meters per flow (second meter in a following table)",
         .per_flow = true, .set_mac = true, .push_vlan = true, .count = true, .nb_meters = 2,
     },
 };
@@ -71,6 +71,7 @@ enum {
     OPT_NO_STATS,
     OPT_SYNC,
     OPT_EGRESS_VLAN,
+    OPT_GROUP_METER,
     OPT_FLOW_QUEUE_SIZE,
     OPT_PUSH_BURST,
 };
@@ -169,6 +170,7 @@ int parse_custom_args(int argc, char *argv[], struct application_settings *app_s
         {"no-stats",        no_argument,       0, OPT_NO_STATS},
         {"sync",            no_argument,       0, OPT_SYNC},
         {"egress-vlan",     no_argument,       0, OPT_EGRESS_VLAN},
+        {"group-meter",     no_argument,       0, OPT_GROUP_METER},
         {"stats-interval",  required_argument, 0, 't'},
         {"flow-queue-size", required_argument, 0, OPT_FLOW_QUEUE_SIZE},
         {"push-burst",      required_argument, 0, OPT_PUSH_BURST},
@@ -199,6 +201,7 @@ int parse_custom_args(int argc, char *argv[], struct application_settings *app_s
     app_settings->no_stats = false;
     app_settings->sync = false;
     app_settings->egress_vlan = false;
+    app_settings->group_meter = false;
 
     while ((opt = getopt_long(argc, argv, "M:n:H:t:h", long_options, NULL)) != -1) {
         switch (opt) {
@@ -255,6 +258,9 @@ int parse_custom_args(int argc, char *argv[], struct application_settings *app_s
         case OPT_EGRESS_VLAN:
             app_settings->egress_vlan = true;
             break;
+        case OPT_GROUP_METER:
+            app_settings->group_meter = true;
+            break;
         case 't':
             if (parse_u64(optarg, &v) < 0 || v == 0)
                 goto bad_value;
@@ -299,6 +305,14 @@ int parse_custom_args(int argc, char *argv[], struct application_settings *app_s
     }
     if (app_settings->egress_vlan && !app_settings->sync) {
         printf("ERROR: --egress-vlan is implemented only with --sync.\n");
+        return -1;
+    }
+    if (app_settings->mode->nb_meters > 1 && !app_settings->sync) {
+        printf("ERROR: mode '%s' is implemented only with --sync.\n", app_settings->mode->name);
+        return -1;
+    }
+    if (app_settings->group_meter && app_settings->mode->nb_meters < 2) {
+        printf("ERROR: --group-meter needs a mode with two meters (all).\n");
         return -1;
     }
     if (app_settings->push_burst > app_settings->flow_queue_size) {
@@ -355,6 +369,9 @@ void print_help(void)
     printf("\t     --egress-vlan              = Push the VLAN in egress rules (on everything leaving the port)\n");
     printf("\t                                  instead of in the main ingress rules. Modes insert and later,\n");
     printf("\t                                  needs --sync.\n");
+    printf("\t     --group-meter              = Mode all: the second meter is shared by all flows with the same\n");
+    printf("\t                                  source IP (one rule and meter per source IP in the following\n");
+    printf("\t                                  table) instead of a second meter per flow.\n");
     printf("\t     --flow-queue-size <num>    = Async: rule operations in flight per lcore (default: 1024).\n");
     printf("\t     --push-burst <num>         = Async: rule operations sent to HW at once (default: 64).\n");
     printf("\t -h, --help                     = Print this help.\n");

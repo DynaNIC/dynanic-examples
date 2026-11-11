@@ -89,6 +89,9 @@ struct application_settings
     /* Push the VLAN in egress rules (hairpin Tx path) instead of in the main rules. */
     bool egress_vlan;
 
+    /* Mode all: the second meter is per source IP instead of per flow. */
+    bool group_meter;
+
     /* Run control. */
     uint64_t stats_interval_ms;
     bool insert_only;

@@ -50,6 +50,11 @@ uint16_t bf_table_of(const struct bf_flow_ctx *ctx, uint64_t idx);
 /* Actions of the main rules, given by the mode. Returns the count incl. END. */
 unsigned bf_main_actions(const struct bf_flow_ctx *ctx, struct rte_flow_action *acts);
 
+/* Mode all: actions of the stage 1 rule (counter, meter 1, jump to stage 2 group of
+ * the given stage 2 table). bf_main_actions() then gives the stage 2 actions. */
+unsigned bf_stage1_actions(const struct bf_flow_ctx *ctx, uint16_t stage2_table,
+                           struct rte_flow_action *acts);
+
 /* The same actions with the masks for the async actions template (all values fixed). */
 unsigned bf_main_masks(const struct bf_flow_ctx *ctx, struct rte_flow_action *masks);
 

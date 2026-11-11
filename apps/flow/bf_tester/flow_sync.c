@@ -14,6 +14,8 @@
 
 #include "flow_internal.h"
 
+#include <stdlib.h>
+
 #include <rte_common.h>
 
 /* Create one rule in the given group; priority 0 is matched first. */
@@ -66,6 +68,40 @@ static int egress_vlan_insert(struct bf_flow_ctx *ctx)
     return 0;
 }
 
+/*
+ * --group-meter: stage 2 rule "eth / ipv4 src == IP / tcp" for every source IP of the
+ * stream, each with its own meter 2, shared by all flows from that source IP.
+ * Like the per-flow rules, they are freed by closing the port.
+ */
+static int group_rules_insert(struct bf_flow_ctx *ctx)
+{
+    static const struct rte_flow_item_ipv4 src_mask = { .hdr.src_addr = RTE_BE32(0xffffffff) };
+    const struct bf_field_gen *f = &ctx->set->src_ip;
+    struct rte_flow_action acts[BF_MAX_ACTIONS];
+    struct rte_flow_item_ipv4 spec = { 0 };
+    /* The TCP item (no mask) is needed: without an L4 item mlx5 expands the
+     * ipv4-tcp RSS through an extra PTYPE group (mlx5_nta_rss.c), which fails. */
+    const struct rte_flow_item items[] = {
+        { .type = RTE_FLOW_ITEM_TYPE_ETH },
+        { .type = RTE_FLOW_ITEM_TYPE_IPV4, .spec = &spec, .mask = &src_mask },
+        { .type = RTE_FLOW_ITEM_TYPE_TCP },
+        { .type = RTE_FLOW_ITEM_TYPE_END },
+    };
+
+    ctx->group_rules = calloc(ctx->nb_src_groups, sizeof(*ctx->group_rules));
+    if (ctx->group_rules == NULL)
+        return -1;
+    bf_main_actions(ctx, acts);
+    for (uint32_t g = 0; g < ctx->nb_src_groups; g++) {
+        /* The source IP of flow g (g < count, so no wrap). */
+        spec.hdr.src_addr = rte_cpu_to_be_32(f->base + g * f->step);
+        if (rule_create(ctx, "source IP rule", bf_stage2_group(ctx, 0), 0, items, acts,
+                        &ctx->group_rules[g]) < 0)
+            return -1;
+    }
+    return 0;
+}
+
 /* Group 0 rules, miss rules (lower priority) and, in single mode, the eth/ipv4/tcp rule. */
 int bf_sync_fixed_rules_insert(struct bf_flow_ctx *ctx)
 {
@@ -91,6 +127,16 @@ int bf_sync_fixed_rules_insert(struct bf_flow_ctx *ctx)
             return -1;
     }
 
+    /* Mode all: a miss rule in every stage 2 group; with --group-meter the
+     * stage 2 rules (one per source IP) are fixed too. */
+    for (uint16_t t = 0; t < ctx->nb_stage2_tables; t++) {
+        if (rule_create(ctx, "stage 2 miss rule", bf_stage2_group(ctx, t), 1, bf_any_items,
+                        bf_miss_actions(ctx), &ctx->stage2_miss_rules[t]) < 0)
+            return -1;
+    }
+    if (ctx->two_stage && ctx->set->group_meter && group_rules_insert(ctx) < 0)
+        return -1;
+
     bf_main_actions(ctx, acts);
     if (!ctx->set->mode->per_flow &&
         rule_create(ctx, "eth/ipv4/tcp rule", BF_MAIN_GROUP, 0, bf_tcp_any_items,
@@ -108,6 +154,7 @@ int bf_sync_worker(struct bf_worker *w)
     struct bf_flow_ctx *ctx = w->ctx;
     const struct application_settings *set = ctx->set;
     struct rte_flow_action acts[BF_MAX_ACTIONS];
+    struct rte_flow_action stage1[BF_MAX_ACTIONS];
 
     /* Without templates the masks must be given in every rule. */
     struct rte_flow_item_ipv4 ip = { 0 };
@@ -129,10 +176,25 @@ int bf_sync_worker(struct bf_worker *w)
         bf_fill_5tuple(set, i, &ip, &tcp);
         /* TODO (modes edit_mac..all): fill per-rule action values (MAC, MPLS label, meter). */
 
+        const uint16_t t = bf_table_of(ctx, i);
+        int ret = 0;
+
         if (ctx->sync_serialize)
             rte_spinlock_lock(&ctx->sync_lock);
-        int ret = rule_create(ctx, "rte_flow_create()", BF_MAIN_GROUP + bf_table_of(ctx, i), 0,
+        if (ctx->two_stage) {
+            /* Stage 2 first, so the stage 1 rule never jumps to a missing rule.
+             * With --group-meter the stage 2 rules are already there. */
+            if (ctx->flows2 != NULL)
+                ret = rule_create(ctx, "rte_flow_create() stage 2", bf_stage2_group(ctx, t), 0,
+                                  items, acts, &ctx->flows2[i]);
+            bf_stage1_actions(ctx, ctx->flows2 != NULL ? t : 0, stage1);
+            if (ret == 0)
+                ret = rule_create(ctx, "rte_flow_create() stage 1", BF_MAIN_GROUP + t, 0,
+                                  items, stage1, &ctx->flows[i]);
+        } else {
+            ret = rule_create(ctx, "rte_flow_create()", BF_MAIN_GROUP + t, 0,
                               items, acts, &ctx->flows[i]);
+        }
         if (ctx->sync_serialize)
             rte_spinlock_unlock(&ctx->sync_lock);
         if (ret < 0) {
@@ -165,5 +227,6 @@ void bf_sync_teardown(struct bf_flow_ctx *ctx)
     for (uint16_t t = 0; t < BF_MAX_TABLES; t++) {
         rule_destroy(ctx, &ctx->split_rules[t]);
         rule_destroy(ctx, &ctx->miss_rules[t]);
+        rule_destroy(ctx, &ctx->stage2_miss_rules[t]);
     }
 }

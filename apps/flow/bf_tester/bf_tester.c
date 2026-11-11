@@ -136,11 +136,17 @@ static void print_flow_setup(const struct bf_flow_ctx *ctx, const struct applica
     /* What the main rules do with a packet, in HW order. */
     char acts[160];
     int len = 0;
-    if (s->mode->count)
-        len += snprintf(acts + len, sizeof(acts) - len, "count, ");
-    if (s->mode->nb_meters > 0)
-        len += snprintf(acts + len, sizeof(acts) - len, "%u x meter (%llu Mbit/s, mark only), ",
-                        s->mode->nb_meters, BF_METER_CIR_BYTES * 8 / 1000000);
+    const unsigned long long meter_mbps = BF_METER_CIR_BYTES * 8 / 1000000;
+    if (ctx->two_stage)     /* stage 2 rule; the counter and meter 1 are in stage 1 */
+        len += snprintf(acts + len, sizeof(acts) - len, "meter 2 (%llu Mbit/s, color aware, mark only), ",
+                        meter_mbps);
+    else {
+        if (s->mode->count)
+            len += snprintf(acts + len, sizeof(acts) - len, "count, ");
+        if (s->mode->nb_meters > 0)
+            len += snprintf(acts + len, sizeof(acts) - len, "%u x meter (%llu Mbit/s, mark only), ",
+                            s->mode->nb_meters, meter_mbps);
+    }
     if (s->mode->push_vlan && !s->egress_vlan)
         len += snprintf(acts + len, sizeof(acts) - len, "push VLAN %u, ", BF_INSERT_VLAN_ID);
     if (s->mode->set_mac) {
@@ -150,12 +156,35 @@ static void print_flow_setup(const struct bf_flow_ctx *ctx, const struct applica
     }
     snprintf(acts + len, sizeof(acts) - len, "RSS to hairpin queues %u-%u", nb_std, hp_last);
 
-    if (s->mode->per_flow)
-        printf("                 %s  %" PRIu64 " x tcp 5-tuple -> %s (inserted below)\n",
-               groups, s->nb_flows, acts);
-    else
-        printf("                 %s  eth/ipv4/tcp -> %s\n", groups, acts);
-    printf("                 %s  miss -> %s\n", groups, s->check_miss ? "count + drop" : "drop");
+    const char *miss = s->check_miss ? "count + drop" : "drop";
+    if (ctx->two_stage) {
+        /* Mode all: stage 1 in the main groups, stage 2 in the groups after them. */
+        char groups2[32];
+        const uint32_t g2 = bf_stage2_group(ctx, 0);
+        if (ctx->nb_stage2_tables == 1)
+            snprintf(groups2, sizeof(groups2), "group %u", g2);
+        else
+            snprintf(groups2, sizeof(groups2), "groups %u-%u", g2, g2 + ctx->nb_stage2_tables - 1);
+
+        printf("                 %s  %" PRIu64 " x tcp 5-tuple -> count, meter 1 (%llu Mbit/s, mark only),"
+               " jump %s (inserted below)\n", groups, s->nb_flows, meter_mbps,
+               ctx->nb_stage2_tables == 1 ? groups2 : "group +N");
+        printf("                 %s  miss -> %s\n", groups, miss);
+        if (s->group_meter)
+            printf("                 %s  %u x src IP -> %s (one meter per source IP)\n",
+                   groups2, ctx->nb_src_groups, acts);
+        else
+            printf("                 %s  %" PRIu64 " x tcp 5-tuple -> %s (inserted below)\n",
+                   groups2, s->nb_flows, acts);
+        printf("                 %s  miss -> %s\n", groups2, miss);
+    } else {
+        if (s->mode->per_flow)
+            printf("                 %s  %" PRIu64 " x tcp 5-tuple -> %s (inserted below)\n",
+                   groups, s->nb_flows, acts);
+        else
+            printf("                 %s  eth/ipv4/tcp -> %s\n", groups, acts);
+        printf("                 %s  miss -> %s\n", groups, miss);
+    }
     if (s->egress_vlan) {
         printf("                 egress group 0  all -> jump egress group 1\n");
         printf("                 egress group 1  all -> push VLAN %u\n", BF_INSERT_VLAN_ID);
