@@ -25,6 +25,13 @@
 /* Room for the actions of one rule including END (future modes add more). */
 #define BF_MAX_ACTIONS 8
 
+/*
+ * TEMPORARY experiment: in sync mode push the VLAN (insert mode) on egress,
+ * in the hairpin Tx path, instead of in the ingress per-flow rules.
+ * Remove this define and the code under it after the measurement.
+ */
+#define BF_TMP_EGRESS_VLAN 1
+
 /* --- Rule building blocks (defined in flow_rules.c) --------------------- */
 
 /* Pattern of a single rule: any packet / any eth-ipv4-tcp / exact 5-tuple. */

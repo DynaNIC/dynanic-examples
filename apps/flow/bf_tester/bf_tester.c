@@ -136,8 +136,9 @@ static void print_flow_setup(const struct bf_flow_ctx *ctx, const struct applica
     int len = 0;
     if (s->mode->count)
         len += snprintf(acts + len, sizeof(acts) - len, "count, ");
-    if (s->mode->push_vlan)
-        len += snprintf(acts + len, sizeof(acts) - len, "push VLAN %u, ", BF_INSERT_VLAN_ID);
+    if (s->mode->push_vlan)   /* TEMPORARY: "(egress)" while BF_TMP_EGRESS_VLAN is on */
+        len += snprintf(acts + len, sizeof(acts) - len, "push VLAN %u%s, ", BF_INSERT_VLAN_ID,
+                        s->sync ? " (egress)" : "");
     if (s->mode->set_mac) {
         char mac[RTE_ETHER_ADDR_FMT_SIZE];
         rte_ether_format_addr(mac, sizeof(mac), &ctx->port_mac);

@@ -342,7 +342,8 @@ static unsigned main_actions_build(const struct bf_flow_ctx *ctx, struct rte_flo
         /* TODO (modes meter, all): METER_MARK action, objects reserved
          * through nb_meters in rte_flow_configure(). */
     }
-    if (mode->push_vlan) {
+    /* TEMPORARY (BF_TMP_EGRESS_VLAN): sync pushes the VLAN on egress instead. */
+    if (mode->push_vlan && !(BF_TMP_EGRESS_VLAN && ctx->set->sync)) {
         /* SET_VLAN_VID must follow OF_PUSH_VLAN directly. */
         a[n++] = (struct rte_flow_action){ .type = RTE_FLOW_ACTION_TYPE_OF_PUSH_VLAN,
                                            .conf = &ctx->push_vlan };
