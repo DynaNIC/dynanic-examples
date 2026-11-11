@@ -335,7 +335,8 @@ void print_help(void)
 
     printf("\nRule insertion:\n");
     printf("\t     --sync                     = Create rules synchronously with rte_flow_create() (as testpmd)\n");
-    printf("\t                                  instead of the async template API. Works with SW steering\n");
+    printf("\t                                  instead of the async template API. Use it for measurements,\n");
+    printf("\t                                  async is only for future reference. Works with SW steering\n");
     printf("\t                                  (default dv_flow_en=1) and with HW steering (dv_flow_en=2).\n");
     printf("\t     --flow-queue-size <num>    = Async: rule operations in flight per lcore (default: 1024).\n");
     printf("\t     --push-burst <num>         = Async: rule operations sent to HW at once (default: 64).\n");

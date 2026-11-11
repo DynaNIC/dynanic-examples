@@ -1,4 +1,7 @@
 /* flow_async.c: Rule insertion with the async template API (HW steering only).
+*
+* Kept for future reference only, not tuned: the measurements use the sync API
+* (flow_sync.c), which forwards faster with many rules (see the README).
 * Copyright (C) DynaNIC Semiconductors, Ltd. - All Rights Reserved
 * SPDX-License-Identifier: BSD-3-Clause
 * Author: Pavlina Patova <patova@dyna-nic.com>, November 2026

@@ -4,10 +4,10 @@ Hairpin forwarding on a BlueField / ConnectX (mlx5) port with large HW steering
 rule sets. Traffic received on port 0 is steered by `rte_flow` rules to hairpin
 queues and sent back out of the same port without touching the CPU.
 
-Rules are created with the template (async) flow API: every worker lcore owns a
-flow queue and inserts its share of rules with postponed operations, pushed in
-bursts. This is what makes millions of rules practical; synchronous
-`rte_flow_create()` (as used by testpmd's `flow create`) is far slower.
+Measurements use synchronous `rte_flow_create()` (`--sync`), with all worker
+lcores inserting in parallel. The async template API (default without
+`--sync`) inserts ~100x faster but forwards slower with millions of rules on
+this card; it is kept for future reference only and is not tuned.
 
 ## Modes
 
@@ -47,13 +47,14 @@ cmake ../apps && make bf_tester
 | `-M, --mode` | Measurement mode, see above (default `single`). |
 | `--src-ip`, `--dst-ip`, `--src-port`, `--dst-port` | 5-tuple of the generated rules as `BASE[,COUNT[,STEP]]`, the same as the Spirent modifiers. Defaults are the stream block bases (192.85.1.2, 192.0.0.1, 1024, 1024), so usually only the counts are given. |
 | `-n, --flows` | Number of rules; default is all distinct flows of the stream. |
+| `--tables` | Spread the rules over N tables/groups (power of two, default 1) by the lowest bits of the source IP; group 0 jumps straight to the right one. 8 was best for 16M rules. |
 | `-H, --hp-queues` | Number of hairpin queues the traffic is spread over (default 8). |
 | `--check-miss` | Count packets matching no rule and report them every interval and at exit. |
 | `--insert-only` | Insert the rules, print the insertion rate and exit (no traffic phase). |
 | `-t, --stats-interval` | Seconds between stats lines (default 1). |
 | `--no-stats` | Do not read any statistics or counters while forwarding; the app just waits for Ctrl+C (the numbers come from Spirent). Cannot be combined with `--check-miss`. |
-| `--sync` | Create rules synchronously with `rte_flow_create()` (as testpmd) instead of the async template API. Works with SW steering (default `dv_flow_en=1`) and with HW steering (`dv_flow_en=2`). |
-| `--flow-queue-size`, `--push-burst` | Async insertion tuning: operations in flight per lcore (1024) and operations pushed to HW at once (64). |
+| `--sync` | Create rules synchronously with `rte_flow_create()` (as testpmd) instead of the async template API. Use it for measurements. Works with SW steering (default `dv_flow_en=1`) and with HW steering (`dv_flow_en=2`). |
+| `--flow-queue-size`, `--push-burst` | Async only (future reference): operations in flight per lcore (1024) and operations pushed to HW at once (64). |
 
 The number of lcores (`-l`) sets the insertion parallelism: every lcore except
 the main one inserts rules, in both async and `--sync` mode (the mlx5 flow API

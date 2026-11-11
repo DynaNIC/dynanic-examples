@@ -91,7 +91,7 @@ static void print_config(const struct application_settings *s, uint16_t nb_std)
     printf("Mode:            %s (%s)\n", s->mode->name, s->mode->desc);
     printf("Queues:          %u standard (0-%u), %u hairpin (%u-%u)\n",
            nb_std, nb_std - 1, s->nb_hp_queues, nb_std, nb_std + s->nb_hp_queues - 1);
-    printf("Rule API:        %s\n", s->sync ? "sync (rte_flow_create)" : "async (template API)");
+    printf("Rule API:        %s\n", s->sync ? "sync (rte_flow_create)" : "async (template API, future reference only, not tuned)");
     printf("Statistics:      %s\n", s->no_stats ? "off" : "on");
     printf("Miss check:      %s\n", s->check_miss ? "on" : "off");
     if (s->mode->per_flow) {
