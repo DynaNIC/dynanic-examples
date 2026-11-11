@@ -517,13 +517,18 @@ int bf_flow_bulk_insert(struct bf_flow_ctx *ctx, volatile int *stop, struct bf_b
 int bf_flow_counter_read(struct bf_flow_ctx *ctx, struct rte_flow *flow,
                          uint64_t *hits, uint64_t *bytes)
 {
-    const struct rte_flow_action count = { .type = RTE_FLOW_ACTION_TYPE_COUNT };
+    /* mlx5 HWS (flow_hw_query) walks the actions up to END, so a single
+     * action without END makes it read past the end of the list. */
+    const struct rte_flow_action count[] = {
+        { .type = RTE_FLOW_ACTION_TYPE_COUNT },
+        { .type = RTE_FLOW_ACTION_TYPE_END },
+    };
     struct rte_flow_query_count qc = { 0 };
     struct rte_flow_error err;
 
     if (flow == NULL)
         return -1;
-    if (rte_flow_query(ctx->port_id, flow, &count, &qc, &err) != 0)
+    if (rte_flow_query(ctx->port_id, flow, count, &qc, &err) != 0)
         return -1;
     *hits = qc.hits_set ? qc.hits : 0;
     if (bytes != NULL)
