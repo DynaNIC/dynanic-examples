@@ -31,6 +31,7 @@
 #include <rte_ethdev.h>
 #include <rte_launch.h>
 #include <rte_lcore.h>
+#include <rte_mtr.h>
 
 void bf_flow_err_log(const char *what, const struct rte_flow_error *err)
 {
@@ -148,6 +149,54 @@ static void tables_setup(struct bf_flow_ctx *ctx)
         ctx->table_flows[bf_table_of(ctx, i)]++;
 }
 
+
+/*
+ * Meter modes: add the shared meter profile (after rte_flow_configure(), which
+ * creates the meter pool) and fill the METER_MARK action of the main rules.
+ */
+static int meter_setup(struct bf_flow_ctx *ctx)
+{
+    struct rte_mtr_meter_profile prof = {
+        .alg = RTE_MTR_SRTCM_RFC2697,
+        .srtcm_rfc2697 = {
+            .cir = BF_METER_CIR_BYTES,
+            .cbs = BF_METER_CBS_BYTES,
+            .ebs = BF_METER_EBS_BYTES,
+        },
+    };
+    struct rte_mtr_error merr = { 0 };
+    struct rte_flow_port_info pinfo = { 0 };
+    struct rte_flow_queue_info qinfo = { 0 };
+    struct rte_flow_error err;
+
+    /* Now the meter capacity is known (for the setup report). */
+    if (rte_flow_info_get(ctx->port_id, &pinfo, &qinfo, &err) == 0)
+        ctx->max_meters = pinfo.max_nb_meters;
+
+    int ret = rte_mtr_meter_profile_add(ctx->port_id, BF_METER_PROFILE_ID, &prof, &merr);
+    if (ret != 0) {
+        rte_log(RTE_LOG_ERR, RTE_LOGTYPE_USER1,
+                "ERROR: rte_mtr_meter_profile_add(): %s (%s)\n", rte_strerror(-ret),
+                merr.message ? merr.message : "no details");
+        return -1;
+    }
+    struct rte_flow_meter_profile *p =
+        rte_mtr_meter_profile_get(ctx->port_id, BF_METER_PROFILE_ID, &merr);
+    if (p == NULL) {
+        rte_log(RTE_LOG_ERR, RTE_LOGTYPE_USER1,
+                "ERROR: rte_mtr_meter_profile_get(): %s\n",
+                merr.message ? merr.message : "no details");
+        return -1;
+    }
+    /* Color blind, enabled, no policy: the meter only marks the color. */
+    ctx->meter_mark = (struct rte_flow_action_meter_mark){
+        .profile = p,
+        .color_mode = 0,
+        .state = 1,
+    };
+    return 0;
+}
+
 /*
  * edit_mac / insert modes: set the source MAC to the port's own MAC, as a router
  * would (the destination MAC stays, so Spirent still gets the packets), and push
@@ -189,7 +238,8 @@ int bf_flow_engine_configure(struct bf_flow_ctx *ctx, uint16_t port_id,
     ctx->set = set;
     ctx->nb_flows = set->mode->per_flow ? set->nb_flows : 0;
     ctx->nb_flow_queues = nb_flow_queues;
-    ctx->sync_serialize = set->sync && set->mode->count;
+    /* Counters and meters of sync rules are not thread-safe in mlx5, see sync_lock. */
+    ctx->sync_serialize = set->sync && (set->mode->count || set->mode->nb_meters > 0);
     rte_spinlock_init(&ctx->sync_lock);
     tables_setup(ctx);
     if (set->mode->set_mac || set->mode->push_vlan)
@@ -199,6 +249,11 @@ int bf_flow_engine_configure(struct bf_flow_ctx *ctx, uint16_t port_id,
     memset(&pinfo, 0, sizeof(pinfo));
     memset(&qinfo, 0, sizeof(qinfo));
     if (rte_flow_info_get(port_id, &pinfo, &qinfo, &err) != 0) {
+        if (set->sync && set->mode->nb_meters > 0) {
+            rte_log(RTE_LOG_ERR, RTE_LOGTYPE_USER1,
+                    "ERROR: meter modes need HW steering, e.g. -a <pci>,dv_flow_en=2\n");
+            return -1;
+        }
         if (set->sync)
             return rss_setup(ctx, first_hp_queue);  /* SW steering, nothing to configure */
         bf_flow_err_log("rte_flow_info_get()", &err);
@@ -236,7 +291,17 @@ int bf_flow_engine_configure(struct bf_flow_ctx *ctx, uint16_t port_id,
         return -1;
     }
 
-    struct rte_flow_port_attr pattr = { .nb_counters = (uint32_t)nb_counters };
+    /* Meters: nb_meters per main rule. The maximum is only reported after
+     * rte_flow_configure(), which fails if there are too many. */
+    uint64_t nb_meters = (uint64_t)set->mode->nb_meters * (set->mode->per_flow ? ctx->nb_flows : 1);
+    if (nb_meters > UINT32_MAX) {
+        rte_log(RTE_LOG_ERR, RTE_LOGTYPE_USER1,
+                "ERROR: %" PRIu64 " meters needed, too many.\n", nb_meters);
+        return -1;
+    }
+
+    struct rte_flow_port_attr pattr = { .nb_counters = (uint32_t)nb_counters,
+                                        .nb_meters = (uint32_t)nb_meters };
     struct rte_flow_queue_attr qattr = { .size = set->flow_queue_size };
     const struct rte_flow_queue_attr **qattrs = calloc(nb_cfg_queues, sizeof(*qattrs));
     if (qattrs == NULL)
@@ -252,7 +317,11 @@ int bf_flow_engine_configure(struct bf_flow_ctx *ctx, uint16_t port_id,
     }
     ctx->hws = true;
     ctx->nb_counters = pattr.nb_counters;
+    ctx->nb_meters = pattr.nb_meters;
     ctx->nb_cfg_queues = nb_cfg_queues;
+
+    if (nb_meters > 0 && meter_setup(ctx) != 0)
+        return -1;
 
     return rss_setup(ctx, first_hp_queue);
 }
@@ -340,10 +409,10 @@ static unsigned main_actions_build(const struct bf_flow_ctx *ctx, struct rte_flo
 
     if (mode->count)
         a[n++] = (struct rte_flow_action){ .type = RTE_FLOW_ACTION_TYPE_COUNT };
-    for (uint8_t m = 0; m < mode->nb_meters; m++) {
-        /* TODO (modes meter, all): METER_MARK action, objects reserved
-         * through nb_meters in rte_flow_configure(). */
-    }
+    /* The PMD creates a new meter object for every rule with this action. */
+    for (uint8_t m = 0; m < mode->nb_meters; m++)
+        a[n++] = (struct rte_flow_action){ .type = RTE_FLOW_ACTION_TYPE_METER_MARK,
+                                           .conf = &ctx->meter_mark };
     /* With --egress-vlan the egress rules push the VLAN instead. */
     if (mode->push_vlan && !ctx->set->egress_vlan) {
         /* SET_VLAN_VID must follow OF_PUSH_VLAN directly. */

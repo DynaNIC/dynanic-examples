@@ -21,7 +21,7 @@ everything from the previous one.
 | `edit_mac` | 2a   | + source MAC := port MAC (fixed value)                     | implemented     |
 | `insert`   | 2b   | + push VLAN 3 (fixed value)                                | implemented     |
 | `count`    | 3a   | + counter per rule                                         | implemented     |
-| `meter`    | 3b   | + meter per rule                                           | not implemented |
+| `meter`    | 3b   | + meter per rule (1 Gbit/s, mark only)                     | implemented     |
 | `all`      | 4    | + counter and two meters per rule                          | not implemented |
 
 In every mode group 0 holds one rule jumping to group 1, and group 1 holds a
@@ -116,22 +116,31 @@ summary prints an OK/FAILED verdict.
 The features of each mode are in `bf_mode_table` (`argparse.c`). To implement
 one, set `.implemented = true` and fill the TODOs in `flow_rules.c`:
 
-* `main_actions_build()`: add the actions (e.g. `METER_MARK`) in the order the
-  HW applies them (counter, meters, push VLAN, modify, fate action);
-* `bf_flow_engine_configure()`: reserve meters (`nb_meters`) in
+* `main_actions_build()`: add the actions in the order the HW applies them
+  (counter, meters, push VLAN, modify, fate action);
+* `bf_flow_engine_configure()`: reserve the objects (counters, meters) in
   `rte_flow_configure()`;
 * `bf_sync_worker()`: fill per-rule action values if they differ per flow.
+
+Meters (`meter` mode): every rule has a `METER_MARK` action with one shared
+srTCM profile, CIR 1 Gbit/s (`BF_METER_CIR_BYTES`). One flow carries ~0.2
+Mbit/s, so all packets stay green: the meter only marks the color, nothing is
+dropped, and the measurement shows the cost of metering alone. The PMD creates
+a meter object for every rule and waits for the HW to set it up, so 2M rules
+take ~160 s. Meters need HW steering (`dv_flow_en=2`); the card has at most
+33,554,432.
 
 Counters are wired: in `count` and later modes a counter is attached to every
 rule and at exit the app reports how many flows received no packets. The card
 has at most 15,728,640 counters, so 16M rules with a counter each do not fit
 (the app stops with an error before inserting anything).
 
-With `--sync` the rules with a counter are inserted one at a time (the worker
-lcores take a lock around `rte_flow_create()`): mlx5 in DPDK 25.11 takes the
-counter of every sync rule from the cache of flow queue 0, a single-producer /
-single-consumer ring, and parallel calls corrupt it (crash or failed
-insertion). 2M rules with a counter take ~30 s.
+With `--sync` the rules with a counter or a meter are inserted one at a time
+(the worker lcores take a lock around `rte_flow_create()`): mlx5 in DPDK 25.11
+takes the counter of every sync rule from the cache of flow queue 0, a
+single-producer / single-consumer ring, and parallel calls corrupt it (crash or
+failed insertion); a sync meter takes a job from the control queue without a
+lock. 2M rules with a counter take ~30 s.
 
 Before forwarding starts the app waits 1 s, because the mlx5 counter values
 are refreshed in the background (every 500 ms by default) and a query returns

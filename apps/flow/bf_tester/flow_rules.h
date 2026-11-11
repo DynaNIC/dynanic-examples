@@ -37,6 +37,17 @@
  * switch, so the switch accepts the tagged frames on the access port. */
 #define BF_INSERT_VLAN_ID 3
 
+/*
+ * Meter modes: srTCM profile shared by all meters. 1 Gbit/s is far above the
+ * rate of one flow (2M flows at 400G is ~0.2 Mbit/s each), so every packet
+ * stays green: the meter only marks the color, nothing is dropped, and the
+ * measurement shows the cost of metering alone.
+ */
+#define BF_METER_PROFILE_ID 1
+#define BF_METER_CIR_BYTES  (1000000000ull / 8)    /* 1 Gbit/s */
+#define BF_METER_CBS_BYTES  (64 * 1024)
+#define BF_METER_EBS_BYTES  (64 * 1024)
+
 struct bf_flow_ctx {
     uint16_t port_id;
     const struct application_settings *set;
@@ -53,10 +64,11 @@ struct bf_flow_ctx {
     uint16_t nb_cfg_queues;     /* flow queues passed to rte_flow_configure() */
 
     /*
-     * Sync rules with a counter: rte_flow_create() is called under sync_lock.
-     * mlx5 (DPDK 25.11) takes the counter of every sync rule from the cache of
-     * flow queue 0, a single-producer/single-consumer ring, so parallel calls
-     * corrupt it (crash or failed insertion).
+     * Sync rules with a counter or a meter: rte_flow_create() is called under
+     * sync_lock. mlx5 (DPDK 25.11) takes the counter of every sync rule from the
+     * cache of flow queue 0, a single-producer/single-consumer ring, so parallel
+     * calls corrupt it (crash or failed insertion). A sync METER_MARK takes a job
+     * from the control queue without a lock (flow_hw_action_job_init()).
      */
     bool sync_serialize;
     rte_spinlock_t sync_lock;
@@ -72,6 +84,12 @@ struct bf_flow_ctx {
     struct rte_flow_action_of_set_vlan_vid set_vlan_vid;
     struct rte_flow_action_modify_field set_src_mac;
     struct rte_flow_action_modify_field set_src_mac_mask;   /* async template mask */
+
+    /* meter modes: METER_MARK with one shared profile; the PMD creates a meter
+     * object for every rule. */
+    struct rte_flow_action_meter_mark meter_mark;
+    uint32_t nb_meters;         /* meters reserved in rte_flow_configure() */
+    uint32_t max_meters;        /* PMD maximum, read after rte_flow_configure() */
 
     /*
      * Main tables (--tables N): table t lives in group BF_MAIN_GROUP + t and

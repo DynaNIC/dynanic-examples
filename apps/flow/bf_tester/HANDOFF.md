@@ -15,7 +15,7 @@ Measure a BlueField-3 forwarding Spirent traffic back through hairpin queues wit
 | 2a | `edit_mac`: + source MAC := port MAC | done |
 | 2b | `insert`: + push VLAN 3 | done (slow on ingress, see below) |
 | 3a | `count`: + counter per rule | implemented, not measured |
-| 3b | `meter`: + meter per rule | not implemented |
+| 3b | `meter`: + meter per rule | implemented, first run only |
 | 4 | `all`: + counter and two meters per rule | not implemented |
 
 Each mode includes everything from the previous one. Output of each measurement:
@@ -149,7 +149,20 @@ Rule layout:
   - Without the reset, the per-flow sum was ~16G packets, ~3x more than the port could have received
     since the rules were created. Cause not found (the counter values taken at allocation may be stale).
     With the reset, the sum is 2.128G against tx_phy 2.070G (+2.8 %) over 45 s.
-  - After the reset, 30 of 2M flows show no hits, although miss is 0 (in every run). Not explained.
+  - After the reset, 30 of 2M flows show no hits, although miss is 0 (in every run). With 1 inserting
+    lcore they are flows #65535, #131071, #196607, … (every 65,536th), so probably counters at a
+    64K boundary that the mlx5 background refresh does not update. Not investigated further.
+
+**Mode 3b `meter`, 2M, sync, 1 inserting lcore, ingress VLAN (first run):**
+- `METER_MARK` with one srTCM profile, CIR 1 Gbit/s, color blind, no policy: marks only, drops nothing.
+- Meter capacity reported after `rte_flow_configure()`: 33,554,432. With a counter per rule the
+  limit stays 15.7M (counters).
+- Insertion 158 s (0.013 Mrules/s): for a sync METER_MARK the PMD sets up the meter by an ASO WQE
+  and waits for it (`flow_hw_meter_mark_alloc()` → `mlx5_aso_mtr_wait()`).
+- Sync METER_MARK uses `flow_hw_action_job_init(MLX5_HW_INV_QUEUE)` → a job from the control queue
+  without a lock, so meter modes are serialized as well.
+- TX 200.0 Gbps (count with 1 lcore: 285.5), rx_phy_discard 49.8 %, miss 0,
+  per-flow sum 2.587G against tx_phy 2.595G.
 
 **Insertion order changes forwarding (2M, sync, ingress VLAN, measured back to back):**
 
@@ -186,8 +199,9 @@ reorders the key for IPv4-address hashing, which suits this stream badly. An unt
    Probable cause, found in the code: mlx5 `flow_hw_query()` walks the actions up to END, and the app
    passed a single COUNT action without END. Fixed with the `count` mode; the miss line and the
    verdict now print (verified on the card), but see the first-interval miss issue under Findings.
-3. **Modes `meter`, `all`.** See the TODOs in `main_actions_build()`.
-   Meters need `nb_meters` in `rte_flow_configure()`. Mind the 15.7M counter limit.
+3. **Mode `all`** (counter and two meters per rule). `main_actions_build()` already adds
+   `nb_meters` METER_MARK actions. Not checked: the HWS action order (`action_order_arr` in
+   `mlx5dr_action.c`) has a single ASO_METER slot, so two meters in one rule may be rejected.
 4. **16M: the remaining ~5 % loss** with 8 tables (cache hypothesis above).
 5. **NFB support (analysis only, nothing implemented).**
    - The DynaNIC nfb PMD in `~/work/sn4dc-dpdk` has hairpin, sync rte_flow, and async only for FST groups.

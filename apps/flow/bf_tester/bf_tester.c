@@ -114,10 +114,12 @@ static void print_flow_setup(const struct bf_flow_ctx *ctx, const struct applica
     if (rte_eth_dev_info_get(PORT_ID, &info) == 0)
         printf("Port:            %u (%s), max rxq %u, max txq %u\n",
                PORT_ID, info.driver_name, info.max_rx_queues, info.max_tx_queues);
-    if (ctx->hws)
+    if (ctx->hws) {
         printf("Steering:        HW (dv_flow_en=2), counters %u used of max %u\n",
                ctx->nb_counters, ctx->max_counters);
-    else
+        if (ctx->nb_meters > 0)
+            printf("                 meters %u used of max %u\n", ctx->nb_meters, ctx->max_meters);
+    } else
         printf("Steering:        SW (dv_flow_en=1)\n");
     /* "group 1" or "groups 1-N" for the matching rules. */
     char groups[32];
@@ -136,6 +138,9 @@ static void print_flow_setup(const struct bf_flow_ctx *ctx, const struct applica
     int len = 0;
     if (s->mode->count)
         len += snprintf(acts + len, sizeof(acts) - len, "count, ");
+    if (s->mode->nb_meters > 0)
+        len += snprintf(acts + len, sizeof(acts) - len, "%u x meter (%llu Mbit/s, mark only), ",
+                        s->mode->nb_meters, BF_METER_CIR_BYTES * 8 / 1000000);
     if (s->mode->push_vlan && !s->egress_vlan)
         len += snprintf(acts + len, sizeof(acts) - len, "push VLAN %u, ", BF_INSERT_VLAN_ID);
     if (s->mode->set_mac) {
@@ -165,7 +170,7 @@ static void print_flow_setup(const struct bf_flow_ctx *ctx, const struct applica
     if (s->sync) {
         printf("Sync API:\n");
         printf("  Insertion:     rte_flow_create(), %u worker lcore(s) %s\n", ctx->nb_flow_queues,
-               ctx->sync_serialize ? "serialized (mlx5 counter cache is not thread-safe)"
+               ctx->sync_serialize ? "serialized (mlx5 counters/meters are not thread-safe)"
                                    : "in parallel");
     } else {
         printf("Async API:\n");
