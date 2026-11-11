@@ -630,6 +630,211 @@ Rules inserted: 2002000 ok, 0 failed in 22.783 s = 0.088 Mrules/s
   rx - tx                              17345959
 ```
 
+# Counters
+Maximální počet countrů je cca 15,7M
+
+## 2M ingress
+```
+[xpatov00@dpdk-test12 ~]$ sudo ./bf_tester_build/build/flow/bf_tester/bf_tester -a 0000:21:00.0,dv_flow_en=2 -n 6 -l 96-112 --socket-mem=4096 -- --src-ip 192.85.1.2,2000 --src-port 1024,1001 -M count --sync
+EAL: Detected CPU lcores: 128
+EAL: Detected NUMA nodes: 1
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'VA'
+EAL: VFIO support initialized
+EAL: TOPOLOGY - core count: l1 17, l2 17, l3 17, l4 0, io 17
+
+=== bf_tester ===
+Mode:            count (insert + counter per rule)
+Queues:          1 standard (0-0), 8 hairpin (1-8)
+Rule API:        sync (rte_flow_create)
+Statistics:      on
+Miss check:      off
+Flows:           2002000
+  first #0: 192.85.1.2:1024 -> 192.0.0.1:1024 tcp
+  last  #2001999: 192.85.8.209:2024 -> 192.0.0.1:1024 tcp
+Lcores:          17 (1 main + 16 inserting workers)
+
+
+=== Flow setup ===
+Port:            0 (mlx5_pci), max rxq 1024, max txq 1024
+Steering:        HW (dv_flow_en=2), counters 2002000 used of max 15728640
+Rules:           group 0  all -> jump group 1
+                 group 1  2002000 x tcp 5-tuple -> count, push VLAN 3, src MAC := E8:9E:49:7F:27:CE, RSS to hairpin queues 1-8 (inserted below)
+                 group 1  miss -> drop
+Sync API:
+  Insertion:     rte_flow_create(), 16 worker lcore(s) serialized (mlx5 counter cache is not thread-safe)
+
+Inserting 2002000 rules on 16 lcore(s), sync rte_flow_create()...
+Rules inserted: 2002000 ok, 0 failed in 31.988 s = 0.063 Mrules/s
+
+=== Traffic summary (36.7 s) ===
+  RX average                      65.50 Mpps     389.91 Gbps
+  TX average                      45.50 Mpps     275.25 Gbps
+  rx_phy_packets                     2402434714
+  rx_phy_bytes                    1787786222052
+  tx_phy_packets                     1669156849
+  tx_phy_bytes                    1262070088736
+  rx_phy_discard_packets              733801289
+  tx_phy_discard_packets                      0
+  rx_out_of_buffer                            0
+  hairpin_out_of_buffer                       0
+  rx - tx                             733277865
+
+Querying 2002000 flow counters...
+Flow counters since forwarding start (0.03 s): packets 1702608145, bytes 1273529869370, flows without hits 0, not inserted 0, query errors 0
+```
+
+Jde vidět že count má i s VLAN na ingressu o cca 10G lepší výsledek než jen VLAN bez countru. Jediný rozdíl je v vkládání, kdy pro VLAN ještě dovolujeme vkládat více pravidel zaráz díky zámkům. Pro count to ale už nejde, takže jsou vkládána po jednom. Claude nabízí dvě vysvětlení:
+
+```
+Pořadí vkládání samo dělá ~10 Gbps. Stejný mód count dal s 1 lcore 285,5 Gbps a se 16 lcore 275,3 Gbps. Jediný rozdíl je v tom, jak se pravidla vkládala. Je to ale jen jeden běh s 1 lcore. Pokud se to potvrdí, rozdíl dělá rozložení pravidel v HW tabulce. Pravidla vložená v jiném pořadí skončí v BWC matcheru jinak, protože se v jiných chvílích zvětšuje (rehash) a jinak padají kolize. To ovlivní, kolik práce stojí vyhledání každého paketu.
+
+insert se vkládal 16 vlákny skutečně paralelně. count teď kvůli zámku vkládá postupně. Zlepšení tedy může jít za jiným pořadím vkládání, ne za samotnými countery.
+Jistota: střední. Vychází z jednoho běhu s 1 lcore.
+
+Nebo
+Countery mohou změnit rozložení akcí v HW. S counterem má pravidlo jinou sadu akcí, a HWS je proto může rozdělit do STE jinak. Mohlo by to změnit cenu vkládání VLAN (reparse), kterou podezíráme ze ztrát na ingressu. Tohle je čistá spekulace bez opory ve zdrojácích, jistota nízká.
+```
+
+Při použití jen jednoho vlákna (-l96-97) jsem opravdu pro vkládání VLAN na ingress dostala o něco lepší výsledek
+```
+RX average                      65.44 Mpps     389.60 Gbps
+TX average                      48.48 Mpps     292.69 Gbps
+```
+
+Pro count to dopadlo trochu lépe, ale hůř než bez count
+```
+RX average                      65.51 Mpps     389.99 Gbps
+TX average                      47.25 Mpps     285.60 Gbps
+```
+
+## 2M egress
+
+Nejprve jen vlan s egress na jednom vlákně
+```
+RX average                      65.65 Mpps     390.81 Gbps
+TX average                      65.36 Mpps     390.84 Gbps
+```
+Tady je trochu podezřelé, že je TX víc než RX.
+
+A pak counter
+```
+[xpatov00@dpdk-test12 ~]$ sudo ./bf_tester_build/build/flow/bf_tester/bf_tester -a 0000:21:00.0,dv_flow_en=2 -n 6 -l 96-97 --socket-mem=4096 -- --src-ip 192.85.1.2,2000 --src-port 1024,1001 -M count --sync --egress-vlan
+EAL: Detected CPU lcores: 128
+EAL: Detected NUMA nodes: 1
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'VA'
+EAL: VFIO support initialized
+EAL: TOPOLOGY - core count: l1 2, l2 2, l3 2, l4 0, io 2
+
+=== bf_tester ===
+Mode:            count (insert + counter per rule)
+Queues:          1 standard (0-0), 8 hairpin (1-8)
+Rule API:        sync (rte_flow_create)
+Statistics:      on
+Miss check:      off
+Flows:           2002000
+  first #0: 192.85.1.2:1024 -> 192.0.0.1:1024 tcp
+  last  #2001999: 192.85.8.209:2024 -> 192.0.0.1:1024 tcp
+Lcores:          2 (1 main + 1 inserting workers)
+
+
+=== Flow setup ===
+Port:            0 (mlx5_pci), max rxq 1024, max txq 1024
+Steering:        HW (dv_flow_en=2), counters 2002000 used of max 15728640
+Rules:           group 0  all -> jump group 1
+                 group 1  2002000 x tcp 5-tuple -> count, src MAC := E8:9E:49:7F:27:CE, RSS to hairpin queues 1-8 (inserted below)
+                 group 1  miss -> drop
+                 egress group 0  all -> jump egress group 1
+                 egress group 1  all -> push VLAN 3
+Sync API:
+  Insertion:     rte_flow_create(), 1 worker lcore(s) serialized (mlx5 counter cache is not thread-safe)
+
+Inserting 2002000 rules on 1 lcore(s), sync rte_flow_create()...
+Rules inserted: 2002000 ok, 0 failed in 26.788 s = 0.075 Mrules/s
+
+=== Traffic summary (11.5 s) ===
+  RX average                      65.65 Mpps     390.86 Gbps
+  TX average                      63.13 Mpps     376.49 Gbps
+  rx_phy_packets                      754908843
+  rx_phy_bytes                     561769985516
+  tx_phy_packets                      725863284
+  tx_phy_bytes                     541115218802
+  rx_phy_discard_packets                5486293
+  tx_phy_discard_packets                      0
+  rx_out_of_buffer                            0
+  hairpin_out_of_buffer                       0
+  rx - tx                              29045559
+
+Querying 2002000 flow counters...
+Flow counters since forwarding start (0.02 s): packets 780563491, bytes 577997228054, flows without hits 0, not inserted 0, query errors 0
+```
+
+Pro counter už to o něco kleslo, zkusíme co se stane pro count když dáme zpět lcory
+```
+[xpatov00@dpdk-test12 ~]$ sudo ./bf_tester_build/build/flow/bf_tester/bf_tester -a 0000:21:00.0,dv_flow_en=2 -n 6 -l 96-112 --socket-mem=4096 -- --src-ip 192.85.1.2,2000 --src-port 1024,1001 -M count --sync --egress-vlan
+EAL: Detected CPU lcores: 128
+EAL: Detected NUMA nodes: 1
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'VA'
+EAL: VFIO support initialized
+EAL: TOPOLOGY - core count: l1 17, l2 17, l3 17, l4 0, io 17
+
+=== bf_tester ===
+Mode:            count (insert + counter per rule)
+Queues:          1 standard (0-0), 8 hairpin (1-8)
+Rule API:        sync (rte_flow_create)
+Statistics:      on
+Miss check:      off
+Flows:           2002000
+  first #0: 192.85.1.2:1024 -> 192.0.0.1:1024 tcp
+  last  #2001999: 192.85.8.209:2024 -> 192.0.0.1:1024 tcp
+Lcores:          17 (1 main + 16 inserting workers)
+
+
+=== Flow setup ===
+Port:            0 (mlx5_pci), max rxq 1024, max txq 1024
+Steering:        HW (dv_flow_en=2), counters 2002000 used of max 15728640
+Rules:           group 0  all -> jump group 1
+                 group 1  2002000 x tcp 5-tuple -> count, src MAC := E8:9E:49:7F:27:CE, RSS to hairpin queues 1-8 (inserted below)
+                 group 1  miss -> drop
+                 egress group 0  all -> jump egress group 1
+                 egress group 1  all -> push VLAN 3
+Sync API:
+  Insertion:     rte_flow_create(), 16 worker lcore(s) serialized (mlx5 counter cache is not thread-safe)
+
+Inserting 2002000 rules on 16 lcore(s), sync rte_flow_create()...
+Rules inserted: 2002000 ok, 0 failed in 28.400 s = 0.070 Mrules/s
+
+=== Traffic summary (34.1 s) ===
+  RX average                      65.50 Mpps     389.94 Gbps
+  TX average                      58.80 Mpps     351.53 Gbps
+  rx_phy_packets                     2233027137
+  rx_phy_bytes                    1661721196406
+  tx_phy_packets                     2004720358
+  tx_phy_bytes                    1498028188198
+  rx_phy_discard_packets              144177742
+  tx_phy_discard_packets                      0
+  rx_out_of_buffer                            0
+  hairpin_out_of_buffer                       0
+  rx - tx                             228306779
+
+Querying 2002000 flow counters...
+Flow counters since forwarding start (0.03 s): packets 2148435469, bytes 1592550030118, flows without hits 0, not inserted 0, query errors 0
+```
+
+### Proc je to o neco horsi
+Hlavní teorie: přístupy do paměti counterů (jistota střední, neověřeno)
+
+Každý paket musí v HW přičíst k svému counteru pakety a bajty, tedy přečíst hodnotu, upravit ji a zapsat zpět.
+Spirent posílá 2M flow dokola, takže každý paket míří na jiný counter než ten předchozí. 2M counterů se do cache v NIC nevejde a counter se pak čte z paměti hostitele (ICM) přes PCIe.
+Je to stejný mechanismus jako u hypotézy, že se do cache nevejdou samotná pravidla při 16M flow. Sedí k tomu, že s counterem rostou ztráty právě na vstupu: rx_phy_discard 25,4 % → 27,9 %.
+
+# Meters
+
 ---
 
 ## Poznámky
