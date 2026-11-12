@@ -13,7 +13,7 @@ Measure a BlueField-3 forwarding Spirent traffic back through hairpin queues wit
 | base | `single`: one eth/ipv4/tcp rule → RSS over hairpin queues | done |
 | 1 | `per-flow`: one exact TCP 5-tuple rule per flow, 2M/4M/8M/16M flows | done |
 | 2a | `edit_mac`: + source MAC := port MAC | done |
-| 2b | `insert`: + push VLAN 3 | done (slow on ingress, see below) |
+| 2b | `insert`: + push a VLAN (`--vlan`, default 3) | done (slow on ingress, see below) |
 | 3a | `count`: + counter per rule | done, 2M measured (ingress and egress VLAN) |
 | 3b | `meter`: + meter per rule | done, 2M measured (ingress and egress VLAN) |
 | 4 | `all`: + counter and two meters per flow | done, 2M measured; meter 2 marks everything red, see below |

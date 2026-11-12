@@ -216,13 +216,13 @@ static int meter_setup(struct bf_flow_ctx *ctx)
 /*
  * edit_mac / insert modes: set the source MAC to the port's own MAC, as a router
  * would (the destination MAC stays, so Spirent still gets the packets), and push
- * VLAN BF_INSERT_VLAN_ID.
+ * the VLAN given by --vlan.
  */
 static void edit_setup(struct bf_flow_ctx *ctx)
 {
     rte_eth_macaddr_get(ctx->port_id, &ctx->port_mac);
     ctx->push_vlan.ethertype = RTE_BE16(RTE_ETHER_TYPE_VLAN);
-    ctx->set_vlan_vid.vlan_vid = rte_cpu_to_be_16(BF_INSERT_VLAN_ID);
+    ctx->set_vlan_vid.vlan_vid = rte_cpu_to_be_16(ctx->set->vlan_id);
 
     ctx->set_src_mac = (struct rte_flow_action_modify_field){
         .operation = RTE_FLOW_MODIFY_SET,

@@ -39,7 +39,7 @@ static const struct bf_mode_info bf_mode_table[BF_MODE_MAX] = {
     },
     [BF_MODE_INSERT] = {
         .id = BF_MODE_INSERT, .name = "insert", .implemented = true,
-        .desc = "edit_mac + push VLAN 3",
+        .desc = "edit_mac + push a VLAN (--vlan, default 3)",
         .per_flow = true, .set_mac = true, .push_vlan = true,
     },
     [BF_MODE_COUNT] = {
@@ -71,6 +71,7 @@ enum {
     OPT_NO_STATS,
     OPT_SYNC,
     OPT_EGRESS_VLAN,
+    OPT_VLAN,
     OPT_GROUP_METER,
     OPT_COLOR_CHECK,
     OPT_FLOW_QUEUE_SIZE,
@@ -157,6 +158,7 @@ int parse_custom_args(int argc, char *argv[], struct application_settings *app_s
 {
     int opt;
     uint64_t v;
+    bool vlan_given = false;
     static const struct option long_options[] = {
         {"mode",            required_argument, 0, 'M'},
         {"flows",           required_argument, 0, 'n'},
@@ -171,6 +173,7 @@ int parse_custom_args(int argc, char *argv[], struct application_settings *app_s
         {"no-stats",        no_argument,       0, OPT_NO_STATS},
         {"sync",            no_argument,       0, OPT_SYNC},
         {"egress-vlan",     no_argument,       0, OPT_EGRESS_VLAN},
+        {"vlan",            required_argument, 0, OPT_VLAN},
         {"group-meter",     no_argument,       0, OPT_GROUP_METER},
         {"color-check",     no_argument,       0, OPT_COLOR_CHECK},
         {"stats-interval",  required_argument, 0, 't'},
@@ -203,6 +206,7 @@ int parse_custom_args(int argc, char *argv[], struct application_settings *app_s
     app_settings->no_stats = false;
     app_settings->sync = false;
     app_settings->egress_vlan = false;
+    app_settings->vlan_id = BF_DEFAULT_VLAN_ID;
     app_settings->group_meter = false;
     app_settings->color_check = false;
 
@@ -261,6 +265,12 @@ int parse_custom_args(int argc, char *argv[], struct application_settings *app_s
         case OPT_EGRESS_VLAN:
             app_settings->egress_vlan = true;
             break;
+        case OPT_VLAN:
+            if (parse_u64(optarg, &v) < 0 || v == 0 || v > 4094)
+                goto bad_value;
+            app_settings->vlan_id = (uint16_t)v;
+            vlan_given = true;
+            break;
         case OPT_GROUP_METER:
             app_settings->group_meter = true;
             break;
@@ -303,6 +313,10 @@ int parse_custom_args(int argc, char *argv[], struct application_settings *app_s
     }
     if (app_settings->no_stats && app_settings->check_miss) {
         printf("ERROR: --check-miss needs statistics, it cannot be used with --no-stats.\n");
+        return -1;
+    }
+    if (vlan_given && !app_settings->mode->push_vlan) {
+        printf("ERROR: --vlan needs a mode that pushes a VLAN (insert and later).\n");
         return -1;
     }
     if (app_settings->egress_vlan && !app_settings->mode->push_vlan) {
@@ -380,6 +394,8 @@ void print_help(void)
     printf("\t                                  instead of the async template API. Use it for measurements,\n");
     printf("\t                                  async is only for future reference. Works with SW steering\n");
     printf("\t                                  (default dv_flow_en=1) and with HW steering (dv_flow_en=2).\n");
+    printf("\t     --vlan <id>                = VLAN ID pushed by mode insert and later, 1-4094 (default: %d).\n",
+           BF_DEFAULT_VLAN_ID);
     printf("\t     --egress-vlan              = Push the VLAN in egress rules (on everything leaving the port)\n");
     printf("\t                                  instead of in the main ingress rules. Modes insert and later,\n");
     printf("\t                                  needs --sync.\n");

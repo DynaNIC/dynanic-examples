@@ -148,7 +148,7 @@ static void print_flow_setup(const struct bf_flow_ctx *ctx, const struct applica
                             s->mode->nb_meters, meter_mbps);
     }
     if (s->mode->push_vlan && !s->egress_vlan)
-        len += snprintf(acts + len, sizeof(acts) - len, "push VLAN %u, ", BF_INSERT_VLAN_ID);
+        len += snprintf(acts + len, sizeof(acts) - len, "push VLAN %u, ", s->vlan_id);
     if (s->mode->set_mac) {
         char mac[RTE_ETHER_ADDR_FMT_SIZE];
         rte_ether_format_addr(mac, sizeof(mac), &ctx->port_mac);
@@ -196,7 +196,7 @@ static void print_flow_setup(const struct bf_flow_ctx *ctx, const struct applica
     }
     if (s->egress_vlan) {
         printf("                 egress group 0  all -> jump egress group 1\n");
-        printf("                 egress group 1  all -> push VLAN %u\n", BF_INSERT_VLAN_ID);
+        printf("                 egress group 1  all -> push VLAN %u\n", s->vlan_id);
     }
     if (ctx->nb_tables > 1) {
         printf("                 rules per group:");

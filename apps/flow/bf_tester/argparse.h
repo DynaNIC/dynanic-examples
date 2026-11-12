@@ -53,6 +53,10 @@ struct bf_field_gen {
     uint32_t step;
 };
 
+/* VLAN pushed by default: the test VLAN of the switch, so the switch accepts the
+ * tagged frames on the access port. */
+#define BF_DEFAULT_VLAN_ID 3
+
 /* Upper limit of --tables. */
 #define BF_MAX_TABLES_ARG 64
 
@@ -88,6 +92,9 @@ struct application_settings
 
     /* Push the VLAN in egress rules (hairpin Tx path) instead of in the main rules. */
     bool egress_vlan;
+
+    /* VLAN ID pushed by the insert mode and later (--vlan, default BF_DEFAULT_VLAN_ID). */
+    uint16_t vlan_id;
 
     /* Mode all: the second meter is per source IP instead of per flow. */
     bool group_meter;

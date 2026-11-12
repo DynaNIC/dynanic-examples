@@ -19,7 +19,7 @@ everything from the previous one.
 | `single`   | base | one `eth / ipv4 / tcp` rule → RSS(ipv4-tcp) to hairpin q.  | implemented     |
 | `per-flow` | 1    | one exact TCP 5-tuple rule per flow → RSS to hairpin q.    | implemented     |
 | `edit_mac` | 2a   | + source MAC := port MAC (fixed value)                     | implemented     |
-| `insert`   | 2b   | + push VLAN 3 (fixed value)                                | implemented     |
+| `insert`   | 2b   | + push a VLAN (`--vlan`, default 3)                        | implemented     |
 | `count`    | 3a   | + counter per rule                                         | implemented     |
 | `meter`    | 3b   | + meter per rule (1 Gbit/s, mark only)                     | implemented     |
 | `all`      | 4    | + counter and two meters per flow (see below)              | implemented     |
@@ -54,7 +54,8 @@ cmake ../apps && make bf_tester
 | `-t, --stats-interval` | Seconds between stats lines (default 1). |
 | `--no-stats` | Do not read any statistics or counters while forwarding; the app just waits for Ctrl+C (the numbers come from Spirent). Cannot be combined with `--check-miss`. |
 | `--sync` | Create rules synchronously with `rte_flow_create()` (as testpmd) instead of the async template API. Use it for measurements. Works with SW steering (default `dv_flow_en=1`) and with HW steering (`dv_flow_en=2`). |
-| `--egress-vlan` | Modes `insert` and later, `--sync` only: push the VLAN in two egress rules (egress group 0 jumps to group 1, group 1 pushes VLAN 3 on everything leaving the port) instead of in the main ingress rules. Pushing on ingress drops ~32 % at 400G with 2M rules; on egress it forwards at full rate. |
+| `--vlan` | VLAN ID pushed by mode `insert` and later, 1–4094 (default 3, the test VLAN of the switch). |
+| `--egress-vlan` | Modes `insert` and later, `--sync` only: push the VLAN in two egress rules (egress group 0 jumps to group 1, group 1 pushes the `--vlan` VLAN on everything leaving the port) instead of in the main ingress rules. Pushing on ingress drops ~32 % at 400G with 2M rules; on egress it forwards at full rate. |
 | `--group-meter` | Mode `all` only: the second meter is shared by all flows with the same source IP (one rule and meter per source IP in group 2) instead of a second meter per flow. |
 | `--color-check` | Modes `meter` and `all`, `--sync` only: the rule with the last meter jumps to a color group instead of RSS. There green packets go to RSS, the rest (yellow, red) is counted and goes to RSS too, so nothing is dropped. It adds the lookup a real policer needs (e.g. to drop red) and prints how many packets were not green. |
 | `--flow-queue-size`, `--push-burst` | Async only (future reference): operations in flight per lcore (1024) and operations pushed to HW at once (64). |

@@ -33,10 +33,6 @@
  */
 #define BF_TABLE_MAX_FILL_PCT 70
 
-/* Insert mode: VLAN ID pushed onto every forwarded packet; the test VLAN of the
- * switch, so the switch accepts the tagged frames on the access port. */
-#define BF_INSERT_VLAN_ID 3
-
 /*
  * Meter modes: srTCM profile shared by all meters. 1 Gbit/s is far above the
  * rate of one flow (2M flows at 400G is ~0.2 Mbit/s each), so every packet
